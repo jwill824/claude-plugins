@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/disk-reclaim/scripts/scan_system.py\" --status --quiet-if-ok || true",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/scan_system.py\" --status --quiet-if-ok || true",
             "timeout": 10
           }
         ]
