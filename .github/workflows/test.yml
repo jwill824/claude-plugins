@@ -15,7 +15,7 @@ jobs:
       - name: Run the disk-reclaim suites
         run: |
           set -e
-          for t in plugins/disk-reclaim/skills/disk-reclaim/tests/test_*.py; do
+          for t in plugins/disk-reclaim/tests/test_*.py; do
             echo "== $t"
             python3 -B "$t"
           done

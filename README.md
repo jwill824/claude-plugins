@@ -15,21 +15,21 @@ A [Claude Code](https://code.claude.com) plugin marketplace. Each plugin lives i
 
 From a shell: `claude plugin marketplace add jwill824/claude-plugins` and `claude plugin install disk-reclaim@thingstead`. Update with `claude plugin update disk-reclaim`.
 
-Without plugins, copy `plugins/disk-reclaim/skills/disk-reclaim` into `~/.claude/skills/`. You then add the optional session-start hook by hand (see the skill's `SKILL.md`).
-
-Use one route or the other. In testing, a copied skill named `disk-reclaim` hid the plugin's `disk-reclaim:disk-reclaim` skill from the session, so having both is confusing at best. The plugin's skill is invoked as `/disk-reclaim:disk-reclaim`; a copied skill is `/disk-reclaim`.
+The plugin route is the only supported one. The skills share scripts and reference files at the plugin root (`${CLAUDE_PLUGIN_ROOT}`), which exists only for installed plugins, so copying a single skill folder into `~/.claude/skills/` no longer works. To try a local checkout without installing, run `claude --plugin-dir plugins/disk-reclaim`.
 
 ## disk-reclaim
 
-Type `/disk-reclaim` in Claude Code, or just ask why your disk is full.
+Five commands, one per job. Ask in plain words ("why is my disk full", "why is this project huge") and Claude picks `system` or `scan`. `run` and `review` delete data, so they only start when you type them.
 
 | Command | What happens |
 |---|---|
-| `/disk-reclaim` or `/disk-reclaim DIR` | Scans a directory: biggest folders, build output, caches, git worktrees, large files |
-| `/disk-reclaim status` | One-second check: free space, trend, last scan and cleanup |
-| `/disk-reclaim system` | macOS only. Scans tool caches, Xcode simulators, Android emulators, Docker or Colima volumes, app caches. Optional HTML treemap |
-| `/disk-reclaim run` | Runs the items that are safe to remove, after you approve them |
-| `/disk-reclaim review` | Walks you through items that need a decision, with multiple-choice prompts, and remembers what you keep |
+| `/disk-reclaim:scan [DIR]` | Scans a project folder: biggest folders, build output, caches, git worktrees, large files |
+| `/disk-reclaim:status` | One-second check: free space, trend, last scan and cleanup |
+| `/disk-reclaim:system` | macOS only, read-only. Scans tool caches, Xcode simulators, Android emulators, Docker or Colima volumes, app caches. Optional HTML treemap |
+| `/disk-reclaim:run` | Runs the items that are safe to remove, after a dry run and your approval |
+| `/disk-reclaim:review` | Walks you through items that need a decision, with multiple-choice prompts, and remembers what you keep |
+
+Upgrading from 0.1.x: the single `/disk-reclaim:disk-reclaim` skill is gone, replaced by the five above. Your keep rulings and history carry over, since the state folder is unchanged.
 
 ### How it stays safe
 
@@ -53,7 +53,7 @@ This tool deletes data. Read the dry run, and read what the preview says before 
 ### Tests
 
 ```
-for t in plugins/disk-reclaim/skills/disk-reclaim/tests/test_*.py; do python3 -B "$t"; done
+for t in plugins/disk-reclaim/tests/test_*.py; do python3 -B "$t"; done
 ```
 
 The suites use a fake home folder and fake `docker`, `colima` and `xcrun` programs that only log their arguments. Nothing on your machine is touched. CI runs them on macOS.
