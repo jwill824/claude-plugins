@@ -62,7 +62,24 @@ The suites use a fake home folder and fake `docker`, `colima` and `xcrun` progra
 
 1. Create `plugins/<name>/.claude-plugin/plugin.json` and put skills in `plugins/<name>/skills/<skill>/SKILL.md` (hooks in `hooks/hooks.json`, MCP servers in `.mcp.json`).
 2. Add an entry to `.claude-plugin/marketplace.json` with `"source": "./plugins/<name>"`.
-3. Run `claude plugin validate .`, then bump the plugin's `version` when you change it, since installs follow that field.
+3. Copy `plugins/disk-reclaim/.releaserc.json` to `plugins/<name>/.releaserc.json` and replace `disk-reclaim` with `<name>` everywhere (tag format, rule scopes, changelog and `plugin.json` paths). That is what releases the plugin.
+4. Run `claude plugin validate .`.
+
+## Releases
+
+Releases are automatic on merge to `main`, with [semantic-release](https://semantic-release.gitbook.io) and conventional commits, as in the other repos. Each plugin is versioned and tagged on its own (`disk-reclaim-v0.2.0`), and its `version` in `plugin.json` is bumped for you, since installs follow that field.
+
+A plugin releases only for commits **scoped to it**. Squash-merged PR titles become the commit message, so title PRs like this:
+
+| PR title | Release |
+|---|---|
+| `feat(disk-reclaim): add a review mode` | minor |
+| `fix(disk-reclaim): hold items a container mounts` | patch |
+| `perf(disk-reclaim): ...` | patch |
+| `feat(disk-reclaim)!: ...` or a `BREAKING CHANGE:` footer | major |
+| `feat: ...`, `feat(other-plugin): ...`, `docs`, `ci`, `chore`, `test`, `refactor` | none |
+
+An unscoped `feat:` deliberately does not release anything, because in a repo with several plugins it would release all of them. The release notes for a plugin list every `feat` and `fix` since its last tag, so keep titles scoped. The release commit (`chore(release): ...`) updates `plugin.json` and the plugin's `CHANGELOG.md` directly on `main` with the `GH_TOKEN` secret, which the factory provides.
 
 ## Licence
 
