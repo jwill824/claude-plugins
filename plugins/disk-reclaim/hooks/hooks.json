@@ -1,0 +1,17 @@
+{
+  "description": "Prints a one-line disk status at session start, only when free space is low. Scans nothing and deletes nothing.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/disk-reclaim/scripts/scan_system.py\" --status --quiet-if-ok || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

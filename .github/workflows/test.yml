@@ -1,0 +1,21 @@
+name: test
+on:
+  push:
+  pull_request:
+jobs:
+  disk-reclaim:
+    # The machine-wide scanner and executor are macOS-only; the suites use a fake home folder
+    # and fake docker, colima and xcrun programs, so nothing on the runner is touched.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run the disk-reclaim suites
+        run: |
+          set -e
+          for t in plugins/disk-reclaim/skills/disk-reclaim/tests/test_*.py; do
+            echo "== $t"
+            python3 -B "$t"
+          done

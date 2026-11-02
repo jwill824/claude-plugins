@@ -1,0 +1,9 @@
+# Scan reports and run logs name folders on a real machine: never commit them
+scan*.json
+*-log.tsv
+system-reclaim-log.tsv
+system-report*.html
+system-report*.md
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,14 @@
+{
+  "name": "jw-plugins",
+  "description": "Skills and tools for Claude Code by Jeff Williams.",
+  "owner": { "name": "Jeff Williams" },
+  "plugins": [
+    {
+      "name": "disk-reclaim",
+      "source": "./plugins/disk-reclaim",
+      "description": "Find where disk space is going and reclaim it safely: tiered, git-aware, re-verified before every removal.",
+      "category": "productivity",
+      "tags": ["disk", "cleanup", "storage", "macos"]
+    }
+  ]
+}
