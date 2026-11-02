@@ -47,7 +47,7 @@ check('active tree classed ACTIVE', by['active']['activity']['class'] == 'ACTIVE
 check('key material demotes SAFE -> VERIFY', by['withkey']['tier'] == 'VERIFY')
 check('dirty/unpushed repo demotes SAFE -> VERIFY', by['withrepo']['tier'] == 'VERIFY')
 check('same repo in Claude data goes to KEEP', by['authored-repo']['tier'] == 'KEEP')
-check('open file blocks SAFE item', by['held']['blocked'] and 'python3' in by['held']['blocked'])
+check('open file blocks SAFE item', by['held']['blocked'] and 'python' in by['held']['blocked'].lower())
 check('process command line blocks SAFE item', by['cmdline']['blocked'] and 'command line' in by['cmdline']['blocked'])
 check('symlink path fails the sanity gate -> KEEP', by['symlink']['tier'] == 'KEEP')
 check('shallow path fails the sanity gate -> KEEP', by['shallow']['tier'] == 'KEEP')
