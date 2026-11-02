@@ -3,7 +3,19 @@
   "displayName": "Disk Reclaim",
   "version": "0.1.0",
   "description": "Find where disk space is going and reclaim it safely. Scans a project folder or a whole Mac (tool caches, Xcode simulators, Docker volumes), tiers each item as safe, needs-review or keep, and re-checks every gate right before anything is removed.",
-  "author": { "name": "Jeff Williams" },
+  "author": {
+    "name": "Jeff Williams"
+  },
+  "homepage": "https://github.com/jwill824/claude-plugins/tree/main/plugins/disk-reclaim",
+  "repository": "https://github.com/jwill824/claude-plugins",
   "license": "MIT",
-  "keywords": ["disk", "cleanup", "storage", "cache", "docker", "xcode", "macos"]
+  "keywords": [
+    "disk",
+    "cleanup",
+    "storage",
+    "cache",
+    "docker",
+    "xcode",
+    "macos"
+  ]
 }

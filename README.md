@@ -9,11 +9,11 @@ A [Claude Code](https://code.claude.com) plugin marketplace. Each plugin lives i
 ## Install
 
 ```
-/plugin marketplace add <owner>/<repo>
+/plugin marketplace add jwill824/claude-plugins
 /plugin install disk-reclaim@thingstead
 ```
 
-From a shell: `claude plugin marketplace add <owner>/<repo>` and `claude plugin install disk-reclaim@thingstead`. Update with `claude plugin update disk-reclaim`.
+From a shell: `claude plugin marketplace add jwill824/claude-plugins` and `claude plugin install disk-reclaim@thingstead`. Update with `claude plugin update disk-reclaim`.
 
 Without plugins, copy `plugins/disk-reclaim/skills/disk-reclaim` into `~/.claude/skills/`. You then add the optional session-start hook by hand (see the skill's `SKILL.md`).
 
