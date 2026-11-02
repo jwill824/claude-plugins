@@ -1,5 +1,5 @@
 {
-  "name": "jw-plugins",
+  "name": "thingstead",
   "description": "Skills and tools for Claude Code by Jeff Williams.",
   "owner": { "name": "Jeff Williams" },
   "plugins": [
