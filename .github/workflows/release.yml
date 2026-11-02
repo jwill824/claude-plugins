@@ -1,0 +1,74 @@
+name: Release
+
+# Each plugin releases on its own: plugins/<name>/.releaserc.json holds its tag format and the
+# commit scope that triggers it (feat(<name>): ..., fix(<name>): ...). Commits for other plugins,
+# or without that scope, never release it. Adding a plugin means adding its own .releaserc.json.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plugins:
+    name: Find plugins
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.find.outputs.list }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: find
+        run: |
+          list=$(find plugins -mindepth 2 -maxdepth 2 -name .releaserc.json | cut -d/ -f2 | sort | jq -R . | jq -sc .)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Semantic Release (${{ matrix.plugin }})
+    needs: plugins
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1   # each release pushes a commit to main; keep them sequential
+      matrix:
+        plugin: ${{ fromJson(needs.plugins.outputs.list) }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main   # latest main, so an earlier plugin's release commit is included
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install semantic-release
+        run: |
+          npm install --no-save \
+            semantic-release \
+            @semantic-release/changelog \
+            @semantic-release/exec \
+            @semantic-release/git \
+            conventional-changelog-conventionalcommits
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx semantic-release -e ./plugins/${{ matrix.plugin }}/.releaserc.json

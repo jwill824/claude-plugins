@@ -1,0 +1,50 @@
+{
+  "branches": ["main"],
+  "tagFormat": "disk-reclaim-v${version}",
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "type": "feat", "release": false },
+          { "type": "fix", "release": false },
+          { "type": "perf", "release": false },
+          { "breaking": true, "release": false },
+          { "scope": "disk-reclaim", "type": "feat", "release": "minor" },
+          { "scope": "disk-reclaim", "type": "fix", "release": "patch" },
+          { "scope": "disk-reclaim", "type": "perf", "release": "patch" },
+          { "scope": "disk-reclaim", "breaking": true, "release": "major" }
+        ]
+      }
+    ],
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "plugins/disk-reclaim/CHANGELOG.md",
+        "changelogTitle": "# Changelog"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "sed -i.bak 's/\"version\": \"[^\"]*\"/\"version\": \"${nextRelease.version}\"/' plugins/disk-reclaim/.claude-plugin/plugin.json && rm -f plugins/disk-reclaim/.claude-plugin/plugin.json.bak"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "plugins/disk-reclaim/CHANGELOG.md",
+          "plugins/disk-reclaim/.claude-plugin/plugin.json"
+        ],
+        "message": "chore(release): disk-reclaim ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      { "successComment": false, "failComment": false }
+    ]
+  ]
+}
