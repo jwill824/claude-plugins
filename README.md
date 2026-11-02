@@ -17,6 +17,8 @@ From a shell: `claude plugin marketplace add <owner>/<repo>` and `claude plugin 
 
 Without plugins, copy `plugins/disk-reclaim/skills/disk-reclaim` into `~/.claude/skills/`. You then add the optional session-start hook by hand (see the skill's `SKILL.md`).
 
+Use one route or the other. In testing, a copied skill named `disk-reclaim` hid the plugin's `disk-reclaim:disk-reclaim` skill from the session, so having both is confusing at best. The plugin's skill is invoked as `/disk-reclaim:disk-reclaim`; a copied skill is `/disk-reclaim`.
+
 ## disk-reclaim
 
 Type `/disk-reclaim` in Claude Code, or just ask why your disk is full.
