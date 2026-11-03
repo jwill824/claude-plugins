@@ -1,6 +1,6 @@
 ---
 name: status
-description: One-second disk space check: free space, the trend over the last two weeks, and when the last scan and cleanup ran. Use when the user asks how much disk space is left, whether they need to clean up, or runs /disk-reclaim:status. It reads saved state only; it scans nothing and changes nothing.
+description: One-second disk space check: free space, two-week trend, last scan and cleanup. Use when asked how much disk space is left or whether a cleanup is needed. Reads saved state only; scans and changes nothing.
 ---
 
 # status
