@@ -18,7 +18,7 @@
         ]
       }
     ],
-    "@semantic-release/release-notes-generator",
+    ["./release/scope-notes.mjs", { "scope": "dotfiles" }],
     [
       "@semantic-release/changelog",
       {

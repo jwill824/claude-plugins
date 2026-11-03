@@ -66,6 +66,7 @@ jobs:
             @semantic-release/changelog \
             @semantic-release/exec \
             @semantic-release/git \
+            @semantic-release/release-notes-generator \
             conventional-changelog-conventionalcommits
 
       - name: Release
