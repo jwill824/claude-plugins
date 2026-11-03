@@ -19,7 +19,7 @@ Classes:
 
     python3 audit.py [--json] [--save FILE] [--html FILE] [--all] [--home DIR] [--apps-dir DIR ...] [--max-seconds N]
 """
-import argparse, datetime, json, os, sys, time
+import argparse, datetime, json, os, sys, tempfile, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accepted, adapters, checker, common, identity, knowledge
@@ -617,6 +617,7 @@ def main():
     ap.add_argument('--apps-dir', action='append', help='application folder to scan (default /Applications and ~/Applications)')
     ap.add_argument('--max-seconds', type=int, default=90, help='time budget for sizing folders')
     ap.add_argument('--no-sizes', action='store_true')
+    ap.add_argument('--cmux', action='store_true', help='open the map in a cmux browser split, or reload the tab that shows it (implies --html; cmux only)')
     ap.add_argument('--offline', action='store_true', help='do not let Homebrew refresh its own name index when the checker searches it')
     ap.add_argument('--check', action='append', default=[], metavar='NAME', help='also look for a manager that offers this name (repeatable); prints suggestions only')
     ap.add_argument('--state', metavar='FILE', help='accepted-state file to read (default: $DOTFILES_STATE, else the XDG state folder)')
@@ -626,6 +627,9 @@ def main():
     if bad:
         sys.exit(f'--check takes a plain name (letters, digits, space, dot, hyphen, plus): {bad[0][:40]!r}')
     common.OFFLINE = a.offline
+    private_map = False
+    if a.cmux and not a.html:      # the map names things on this machine: a private temporary file, not a shared location
+        a.html, private_map = os.path.join(tempfile.mkdtemp(prefix='dotfiles-map-'), 'map.html'), True
     state_file = a.state or accepted.state_path()
     records, warn = accepted.load(state_file)
     home = os.path.abspath(a.home)
@@ -643,9 +647,12 @@ def main():
             json.dump(rep, f, indent=1)
     if a.html:
         import htmlmap
-        with open(a.html, 'w') as f:
+        with (os.fdopen(os.open(a.html, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') if private_map else open(a.html, 'w')) as f:
             f.write(htmlmap.render(rep))
         print(f'wrote the map to {a.html}', file=sys.stderr)
+        if a.cmux:
+            import cmuxview
+            print(cmuxview.show(a.html), file=sys.stderr)
     print(json.dumps(rep, indent=1) if a.json else render(rep, a.all))
 
 

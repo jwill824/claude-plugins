@@ -7,7 +7,7 @@ is searched for in every output.
 
     python3 -B tests/test_audit.py
 """
-import json, os, plistlib, shlex, shutil, stat, subprocess, sys, tempfile, time
+import json, os, pathlib, plistlib, re as _re, shlex, shutil, stat, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, '..', 'scripts')
@@ -175,6 +175,8 @@ esac''')
 def env(**extra):
     e = dict(os.environ, PATH=f'{FAKEBIN}:/usr/bin:/bin', DOTFILES_TEST_LOG=LOG, HOME=HOME)
     e['DOTFILES_STATE'] = STATE   # never the developer's real accepted-state file
+    for k_ in [k_ for k_ in e if k_.startswith('CMUX_')]:   # a developer's own cmux session must not decide what "outside cmux" means
+        del e[k_]
     e.pop('HOMEBREW_NO_AUTO_UPDATE', None)   # the test decides whether Homebrew may refresh, not the developer's shell
     e.update(extra)
     return e
@@ -899,6 +901,104 @@ check('the executor contains no deletion, copy, elevation or force: its only mut
 check('the real Trash was never touched by these tests', not os.path.exists(os.path.join(HOME, '.Trash')), '')
 rc, out_t, _ = sh('tidy.py', fa, '--key', VA, '--key', HX)
 check('tidy is unchanged by the shared checks: it still prints Trash moves for orphans', out_t.count('mv -- ') == 2 and 'Cleanup commands (not run)' in out_t, out_t)
+
+# ---- cmux: opt-in only, three exact commands, an existing tab is recognised by its exact URL, and doubt means doing nothing
+import cmuxview  # noqa: E402
+
+CMUXBIN = os.path.join(ROOT, 'cmuxbin')
+CMLOG = os.path.join(ROOT, 'cmux.log')
+write(os.path.join(CMUXBIN, 'cmux'), """#!/bin/bash
+echo "$*" >> "$CMUX_TEST_LOG"
+case "$1 $2" in
+  "tree --all") [ -n "$FAKE_CMUX_TREE_FAIL" ] && { echo "cmux: no socket" >&2; exit 1; }
+                [ -n "$FAKE_CMUX_TREE_BAD" ] && { echo "{ not json"; exit 0; }
+                cat "$FAKE_CMUX_TREE";;
+  "open "*) ;;
+esac
+[ "$1" = "open" ] && { [ -n "$FAKE_CMUX_OPEN_FAIL" ] && { echo "cmux: refused" >&2; exit 1; }; exit 0; }
+[ "$1" = "browser" ] && { [ -n "$FAKE_CMUX_RELOAD_FAIL" ] && { echo "cmux: refused" >&2; exit 1; }; exit 0; }
+exit 0
+""", 0o755)
+
+
+def tree_json(mine, others=(), caller_ws='W1'):
+    sf = lambda ref, typ, title, url: {'ref': ref, 'type': typ, 'title': title, 'url': url}
+    ws = lambda wid, wref, surfaces: {'id': wid, 'ref': wref, 'panes': [{'surfaces': surfaces}]}
+    return {'caller': {'workspace_id': caller_ws, 'workspace_ref': 'workspace:' + caller_ws[1:]},
+            'windows': [{'workspaces': [ws('W1', 'workspace:1', [sf(*x) for x in mine]), ws('W2', 'workspace:2', [sf(*x) for x in others])]}]}
+
+
+def cmux_run(treedata=None, html=None, extra_args=(), **envx):
+    open(CMLOG, 'w').close()
+    tf = os.path.join(ROOT, 'tree.json')
+    if treedata is not None:
+        json.dump(treedata, open(tf, 'w'))
+    e_ = dict(PATH=f'{CMUXBIN}:{FAKEBIN}:/usr/bin:/bin', CMUX_TEST_LOG=CMLOG, FAKE_CMUX_TREE=tf)
+    e_.update(envx)
+    args = ['--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', '--offline'] + (['--html', html] if html else []) + list(extra_args)
+    rc, out, err = sh('audit.py', *args, **e_)
+    calls = [l.strip() for l in open(CMLOG)] if os.path.exists(CMLOG) else []
+    return rc, out, err, calls
+
+
+MAP = os.path.join(ROOT, 'the map #1 100%.html')
+URL = pathlib.Path(MAP).as_uri()
+check('the file URL is percent-encoded the way cmux reports it', '%20' in URL and '%23' in URL and '%25' in URL and URL.startswith('file:///'), URL)
+
+rc, out, err, calls = cmux_run(tree_json([]), html=MAP, CMUX_WORKSPACE_ID='W1')
+check('without --cmux no cmux command is ever run, even inside cmux', rc == 0 and calls == [] and 'wrote the map' in err, calls)
+rc, out, err, calls = cmux_run(tree_json([]), html=MAP, extra_args=['--cmux'])
+check('--cmux outside cmux says so, runs nothing, and the report still prints', rc == 0 and calls == [] and 'not inside cmux' in err and '## Sources' in out, (err, calls))
+rc, out, err, calls = cmux_run(tree_json([]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1', PATH=f'{FAKEBIN}:/usr/bin:/bin')
+check('--cmux with no cmux installed says so and runs nothing', rc == 0 and 'not inside cmux' in err and calls == [], (err, calls))
+rc, out, err, calls = cmux_run(tree_json([]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('inside cmux with no tab showing the map: lists surfaces, then opens it not focused, and nothing else',
+      rc == 0 and calls == ['tree --all --json', f'open {MAP} --no-focus'] and 'opened the map in a cmux browser split' in err, (calls, err))
+rc, out, err, calls = cmux_run(tree_json([('surface:7', 'browser', 'Dotfiles map', URL), ('surface:8', 'terminal', 'zsh', None)]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('a tab already showing exactly this file is reloaded, and no new split is opened (the path needs encoding to match)',
+      calls == ['tree --all --json', 'browser surface:7 reload'] and 'reloaded the map in cmux (surface:7)' in err, (calls, err))
+rc, out, err, calls = cmux_run(tree_json([('surface:7', 'browser', 'Dotfiles map', 'file:///elsewhere/dotfiles-map.html'), ('surface:9', 'terminal', 'Dotfiles map', URL)],
+                                         others=[('surface:20', 'browser', 'Dotfiles map', URL)]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('not touched: the same title at another URL, a terminal, and the same URL in a different workspace; a new split opens instead',
+      calls == ['tree --all --json', f'open {MAP} --no-focus'], calls)
+rc, out, err, calls = cmux_run(tree_json([('surface:1; rm -rf ~', 'browser', 'x', URL), ('tab:3', 'browser', 'x', URL), ('surface:', 'browser', 'x', URL)]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('a surface reference that is not surface:<digits> is ignored, whatever its URL', calls == ['tree --all --json', f'open {MAP} --no-focus'], calls)
+rc, out, err, calls = cmux_run(tree_json([('surface:7', 'browser', 'Dotfiles map', URL), ('surface:11', 'browser', 'Dotfiles map', URL)]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('every tab showing it is reloaded', calls == ['tree --all --json', 'browser surface:7 reload', 'browser surface:11 reload'], calls)
+for label, kw in (('failing', dict(FAKE_CMUX_TREE_FAIL='1')), ('returning bad JSON', dict(FAKE_CMUX_TREE_BAD='1'))):
+    rc, out, err, calls = cmux_run(tree_json([('surface:7', 'browser', 'Dotfiles map', URL)]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1', **kw)
+    check(f'cmux {label} when listing surfaces: nothing is opened or reloaded, it says so, and the audit still prints', rc == 0 and calls == ['tree --all --json'] and 'could not read' in err and '## Sources' in out, (calls, err))
+for label, tr in (('a tree with no caller', {'windows': []}), ('a tree that is not an object', [1, 2]), ('a caller without a workspace', {'caller': {}, 'windows': []})):
+    rc, out, err, calls = cmux_run(tr, html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+    check(f'{label} is not understood: nothing is opened or reloaded', calls == ['tree --all --json'] and 'could not read' in err, (calls, err))
+rc, out, err, calls = cmux_run(tree_json([]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1', FAKE_CMUX_OPEN_FAIL='1')
+check('an open that cmux refuses is reported, not fatal', rc == 0 and 'cmux refused to open' in err and 'refused' in err and '## Sources' in out, err)
+rc, out, err, calls = cmux_run(tree_json([('surface:7', 'browser', 'x', URL)]), html=MAP, extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1', FAKE_CMUX_RELOAD_FAIL='1')
+check('a reload that cmux refuses is reported, not fatal', rc == 0 and 'cmux refused to reload surface:7' in err, err)
+rc, out, err, calls = cmux_run(tree_json([]), extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+tmp_map = (_re.search(r'wrote the map to (\S+)', err) or [None, ''])[1]
+check('--cmux without --html writes the map to a private temporary file and opens that one',
+      tmp_map and os.path.isfile(tmp_map) and oct(os.stat(tmp_map).st_mode & 0o777) == '0o600' and oct(os.stat(os.path.dirname(tmp_map)).st_mode & 0o777) == '0o700'
+      and open(tmp_map).read().startswith('<!doctype html>') and calls == ['tree --all --json', f'open {tmp_map} --no-focus'], (tmp_map, calls))
+ok_forms = [_re.compile(r'^tree --all --json$'), _re.compile(r'^open /.+\.html --no-focus$'), _re.compile(r'^browser surface:\d+ reload$')]
+check('every cmux call made in these tests is one of the three allowed forms', all(any(f.match(c) for f in ok_forms) for c in calls), calls)
+real_isfile = os.path.isfile
+check('the command check accepts exactly the three forms and refuses everything else',
+      cmuxview.allowed(['cmux', 'tree', '--all', '--json']) and cmuxview.allowed(['cmux', 'browser', 'surface:12', 'reload']) and cmuxview.allowed(['cmux', 'open', tmp_map, '--no-focus'])
+      and not any(cmuxview.allowed(a_) for a_ in (['cmux', 'browser', 'surface:1', 'eval', 'x'], ['cmux', 'browser', 'surface:1', 'reload', 'x'], ['cmux', 'browser', 'surface:x', 'reload'], ['cmux', 'open', tmp_map],
+                                                  ['cmux', 'open', 'map.html', '--no-focus'], ['cmux', 'open', ROOT + '/nope.html', '--no-focus'], ['cmux', 'open', os.path.join(ROOT, 'tree.json'), '--no-focus'],
+                                                  ['cmux', 'open', tmp_map + '\n', '--no-focus'], ['cmux', 'rpc', 'x'], ['cmux', 'send', 'x'], ['cmux', 'tree'], ['cmux', 'browser', 'surface:1', 'addscript', 'x'])), '')
+try:
+    cmuxview.run(['cmux', 'browser', 'surface:1', 'eval', 'document.cookie'])
+    refused_run = False
+except ValueError:
+    refused_run = True
+check('run() refuses a disallowed command before anything starts', refused_run, '')
+csrc = open(os.path.join(SCRIPTS, 'cmuxview.py')).read()
+code_only = csrc.split('"""', 2)[2]            # everything after the module docstring, which names what is refused
+bad_words = [w for w in ('eval', 'addscript', 'addinitscript', 'cookies', 'storage', 'network', 'send', 'rpc') if _re.search(r'\b' + w + r'\b', code_only)]
+check('the code never names the powerful cmux commands (only the docstring says they are refused)', not bad_words, bad_words)
+check('the audit makes no cmux call unless --cmux is given (the flag is the only caller of the module)', csrc.count('subprocess.run') == 1 and open(os.path.join(SCRIPTS, 'audit.py')).read().count('cmuxview.show') == 1, '')
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
