@@ -14,8 +14,7 @@ reinstallable, and a snapshot command comes first. It never prints --zap, --forc
 import argparse, datetime, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import accepted
-from audit import newest_write
+import accepted, gates
 from refs import Refs
 
 FORBIDDEN = ('--zap', '--force', '--ignore-dependencies', ' -f ', 'rm -rf', 'sudo')
@@ -46,39 +45,12 @@ def main():
         if i is None:
             held.append(f'`{key}`: not in this audit')
             continue
-        rec = records.get(key)
-        rec = rec if rec and rec['cls'] == i['cls'] else i.get('accepted')
-        if rec:
-            held.append(f"`{key}`: held, you accepted it on {rec.get('date', '?')}: {rec['note']}")
-            continue
-        if i['cls'] != 'orphaned':
-            held.append(f"`{key}`: not offered, it is {i['cls']} ({i['evidence'][0] if i['evidence'] else ''}); only orphan candidates are")
+        why = gates.recheck(i, home, refs, records, a.active_days)
+        if why:
+            held.append(f'`{key}`: {why}')
             continue
         if i['kind'] in ('dotitem', 'broken-link'):
-            p = i['path']
-            if not os.path.lexists(p):
-                held.append(f'`{key}`: already gone')
-                continue
-            if i['kind'] == 'broken-link' and os.path.exists(p):
-                held.append(f'`{key}`: the link works again; nothing to do')
-                continue
-            if i['kind'] == 'dotitem':
-                rel = os.path.relpath(p, home)
-                found = refs.find_path(rel)
-                if found:
-                    held.append(f"`{key}`: held, config files now mention it ({', '.join(found)})")
-                    continue
-                if refs.unreadable:
-                    held.append(f"`{key}`: held, could not read {', '.join(refs.unreadable)}")
-                    continue
-                newest, trunc = newest_write(p, time.time() - a.active_days * 86400)
-                if newest is not None and newest >= time.time() - a.active_days * 86400:
-                    held.append(f'`{key}`: held, something wrote to it within the last {a.active_days} days')
-                    continue
-                if trunc:
-                    held.append(f'`{key}`: held, too large to check for recent writes')
-                    continue
-            cmds.append(trash_cmd(p, stamp))
+            cmds.append(trash_cmd(i['path'], stamp))
         elif i['kind'] == 'brew-orphan':
             if not brew_done:
                 brew_done = True

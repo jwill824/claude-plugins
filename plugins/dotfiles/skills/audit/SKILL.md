@@ -55,4 +55,4 @@ Start with the **Sources** table. If any source failed, say so before anything e
 
 ## Next step
 
-Show the orphan candidates and what references the not-quite-orphans. If the user wants commands for any candidate, tell them to type `/dotfiles:tidy`; you cannot start it for them.
+Show the orphan candidates and what references the not-quite-orphans. If the user wants commands for any candidate, tell them to type `/dotfiles:tidy`; if they want orphan folders and broken links moved to the Trash for them, `/dotfiles:fix`; you cannot start either for them.
