@@ -83,7 +83,7 @@ Audits what is installed on a Mac and who owns it. It **does not manage dotfiles
 
 | Command | What happens |
 |---|---|
-| `/dotfiles:audit` | Lists what is installed by source (Homebrew, mise, npm, uv, cargo, apps), which commands and dotfiles no package manager claims, and leftovers whose tool is gone. Read-only. Claude can start it from a plain question ("what's installed on this machine?") |
+| `/dotfiles:audit [--html FILE]` | Lists what is installed by source (Homebrew, mise, npm, uv, cargo, apps), which commands and dotfiles no package manager claims, and leftovers whose tool is gone. `--html` also writes a self-contained treemap of it by owner and size. Read-only. Claude can start it from a plain question ("what's installed on this machine?") |
 | `/dotfiles:tidy` | Prints, and never runs, the commands for the orphan candidates you pick. Typed-only |
 
 Every item is classed by who owns it, and every claim carries its evidence:
@@ -101,7 +101,7 @@ How it stays safe:
 - **A failed check is never evidence.** If a source cannot be read, "unmanaged" and "orphaned" become "unknown" and the report says why, at the top.
 - **Absence of a tool is weak evidence.** A folder can be in use without the tool being installed (a project's `gradlew`, an IDE, `uvx`), so recent writes and config references keep it out of the orphan list. These only ever make a verdict more cautious.
 - **Read-only, with an allow-list.** The audit only runs list and dry-run commands, and the tests check the commands the fake managers actually received.
-- **Contents are never read into the report.** Dotfiles can hold tokens, so reports name files and folders, never what is inside. References are found by searching shell startup files, Claude settings and MCP configs, LaunchAgents and cron, and only the *name of the file that matched* is reported. Project folders are not searched.
+- **Contents are never read into the report.** Dotfiles can hold tokens, so reports name files and folders, never what is inside. References are found by searching shell startup files, Claude settings and MCP configs, LaunchAgents and cron, and only the *name of the file that matched* is reported. Project folders are not searched. The HTML map is a local file with no scripts and nothing fetched, and it names things on your machine, so keep it local.
 - **`tidy` prints.** Folders and links go to the Trash, manager removals come after a snapshot command, and nothing is printed with `--zap`, `--force` or `--ignore-dependencies`. Each candidate is re-checked first.
 
 Not read yet, and shown as **unknown** when a command resolves into them: `pipx`, `gem`, `go`, `bun`, `pnpm` and version managers like `nvm`, `asdf` and `pyenv`. Which tool owns which dot-folder comes from a hand-maintained table; anything not in it is reported as unattributed, never guessed. Requires Python 3 (standard library only). The application scan is macOS-only; the rest also runs on Linux.

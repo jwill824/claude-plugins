@@ -17,7 +17,7 @@ Classes:
   config        personal config, state, secrets and system files. Listed, never candidates.
   system        part of the operating system
 
-    python3 audit.py [--json] [--save FILE] [--all] [--home DIR] [--apps-dir DIR ...] [--max-seconds N]
+    python3 audit.py [--json] [--save FILE] [--html FILE] [--all] [--home DIR] [--apps-dir DIR ...] [--max-seconds N]
 """
 import argparse, datetime, json, os, sys, time
 
@@ -289,7 +289,10 @@ def scan_apps_and_signals(ctx, results, deadline, want_sizes):
     return items
 
 
-def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60):
+SIZED_KINDS = ('formula', 'tool', 'package', 'toolchain')
+
+
+def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False):
     t0 = time.time()
     ctx = Ctx(home, path_dirs, app_dirs)
     results = adapters.collect(ctx)
@@ -298,11 +301,18 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
     bins, system_names, ephemeral = scan_bins(ctx, results, refs, uncertain)
     idx = build_index(results, bins, system_names)
     deadline = t0 + max_seconds
+    if package_sizes and want_sizes:
+        todo = sorted({p['path'] for res in results.values() for p in res['packages'] if p['kind'] in SIZED_KINDS and p.get('path') and os.path.isdir(p['path'])})
+        szs = sizes(todo, deadline)
+        for res in results.values():
+            for p in res['packages']:
+                if p.get('path') in szs:
+                    p['kb'] = szs[p['path']]
     items = bins + scan_apps_and_signals(ctx, results, deadline, want_sizes) + scan_dots(ctx, results, refs, idx, uncertain, deadline, want_sizes, active_days)
     inventory = {}
     for res in results.values():
         for p in res['packages']:
-            inventory.setdefault(p['owner'], []).append({k: v for k, v in p.items() if k in ('kind', 'name', 'version', 'requested', 'bundled', 'node', 'bundle_id', 'how')})
+            inventory.setdefault(p['owner'], []).append({k: v for k, v in p.items() if k in ('kind', 'name', 'version', 'requested', 'bundled', 'node', 'bundle_id', 'how', 'path', 'kb')})
     return {
         'generated': datetime.datetime.now().isoformat(timespec='seconds'), 'home': home, 'seconds': round(time.time() - t0, 1),
         'adapters': [{'name': n, 'status': r['status'], 'detail': r['detail'], 'packages': len(r['packages'])} for n, r in results.items()],
@@ -412,6 +422,7 @@ def main():
     ap = argparse.ArgumentParser(description='Read-only audit of what is installed and who owns it.')
     ap.add_argument('--json', action='store_true', help='print the full result as JSON instead of the report')
     ap.add_argument('--save', metavar='FILE', help='also write the JSON here (for /dotfiles:tidy)')
+    ap.add_argument('--html', metavar='FILE', help='also write a self-contained HTML map (sizes every package too, so it takes a little longer)')
     ap.add_argument('--all', action='store_true', help='list every Homebrew formula, not just the ones you asked for')
     ap.add_argument('--home', default=os.path.expanduser('~'))
     ap.add_argument('--apps-dir', action='append', help='application folder to scan (default /Applications and ~/Applications)')
@@ -426,10 +437,15 @@ def main():
             seen.add(os.path.realpath(d))
             path_dirs.append(d)
     app_dirs = a.apps_dir or ['/Applications', os.path.join(home, 'Applications')]
-    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days)
+    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html))
     if a.save:
         with open(a.save, 'w') as f:
             json.dump(rep, f, indent=1)
+    if a.html:
+        import htmlmap
+        with open(a.html, 'w') as f:
+            f.write(htmlmap.render(rep))
+        print(f'wrote the map to {a.html}', file=sys.stderr)
     print(json.dumps(rep, indent=1) if a.json else render(rep, a.all))
 
 

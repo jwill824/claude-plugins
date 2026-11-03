@@ -1,7 +1,7 @@
 ---
 name: audit
-description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break. Read-only. Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
-argument-hint: "[--all] [--json]"
+description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break, and can write an HTML map of it. Read-only. Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
+argument-hint: "[--html FILE] [--all] [--json]"
 ---
 
 # audit
@@ -15,7 +15,9 @@ SCAN="$(mktemp -d)/audit.json"
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/audit.py --save "$SCAN" $ARGUMENTS
 ```
 
-It takes under a minute (most of it is sizing folders). `--all` lists every Homebrew formula, not only the ones you asked for. `--json` prints the full result instead of the report. The saved JSON is what `/dotfiles:tidy` reads.
+It takes under a minute (most of it is sizing folders). `--all` lists every Homebrew formula, not only the ones you asked for. `--json` prints the full result instead of the report. `--html FILE` also writes a self-contained map: a treemap of what is installed by owner and size, with the orphan, referenced, unknown and unmanaged lists underneath (it sizes every package too, so it takes a little longer). The saved JSON is what `/dotfiles:tidy` reads.
+
+Open the map locally. It names folders, apps and commands on this machine, so publish it as an Artifact only if the user asks.
 
 ## How to read it
 
