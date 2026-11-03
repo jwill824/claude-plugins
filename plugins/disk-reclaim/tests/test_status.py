@@ -64,6 +64,67 @@ ds.save_run(5, 2 * 1048576, 3 * 1048576, '/tmp/x.tsv')
 rc, out = status(warn_free_gb=0, warn_free_pct=0)
 check('the last cleanup is reported', 'Last cleanup: today: 5 item(s)' in out, out)
 
+# hook mode: a one-line summary for the user, model context only when something needs attention
+import subprocess
+SCRIPTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts')
+
+
+def hook(**kw):
+    rc, out = status(hook=True, **kw)
+    return rc, (json.loads(out) if out.strip() else None)
+
+
+rc, h = hook(warn_free_gb=0, warn_free_pct=0, source='startup')
+check('hook: healthy gives a one-line summary for the user and nothing for the model',
+      rc == 0 and h['systemMessage'].startswith('Disk:') and '\n' not in h['systemMessage'] and 'hookSpecificOutput' not in h, h)
+rc, h = hook(warn_free_gb=10 ** 6, source='resume')
+ctx = (h or {}).get('hookSpecificOutput', {}).get('additionalContext', '')
+check('hook: low space says which threshold was crossed and exits 0', rc == 0 and 'under' in h['systemMessage'] and 'free' in h['systemMessage'], h)
+check('hook: low space gives the model choices to offer and says to remove nothing itself',
+      '/disk-reclaim:system' in ctx and '/disk-reclaim:review' in ctx and 'AskUserQuestion' in ctx
+      and 'do not remove anything yourself' in ctx and 'source: resume' in ctx
+      and h['hookSpecificOutput']['hookEventName'] == 'SessionStart', ctx)
+rc, h = hook(warn_free_gb=0, warn_free_pct=0, quiet_if_ok=True)
+check('hook: --quiet-if-ok prints nothing when healthy', rc == 0 and h is None, h)
+rc, h = hook(warn_free_gb=10 ** 6, quiet_if_ok=True)
+check('hook: --quiet-if-ok still speaks when space is low', rc == 0 and h is not None and 'hookSpecificOutput' in h, h)
+
+SS = os.path.join(SCRIPTS, 'scan_system.py')
+cp = subprocess.run([sys.executable, '-B', SS, '--status', '--hook', '--warn-free-gb', '999999'], input='{"source": "resume"}',
+                    capture_output=True, text=True, timeout=60)
+check('hook: the CLI reads the session source from stdin', cp.returncode == 0 and 'source: resume' in json.loads(cp.stdout)['hookSpecificOutput']['additionalContext'], cp.stdout + cp.stderr)
+# thresholds can come from the environment (settings.json "env"), so a personal threshold stays out of the shared plugin
+used_free_pct = 100 * free / total
+
+
+def hook_cli(env_pct=None, *args):
+    env = dict(os.environ)
+    env.pop('DISK_RECLAIM_WARN_FREE_PCT', None)
+    if env_pct is not None:
+        env['DISK_RECLAIM_WARN_FREE_PCT'] = str(env_pct)
+    cp = subprocess.run([sys.executable, '-B', os.path.join(SCRIPTS, 'scan_system.py'), '--status', '--hook', '--quiet-if-ok', *args],
+                        input='{"source": "startup"}', capture_output=True, text=True, env=env, timeout=60)
+    return cp.returncode, (json.loads(cp.stdout) if cp.stdout.strip() else None), cp.stdout + cp.stderr
+
+
+rc, h, raw = hook_cli(used_free_pct + 1)
+check('hook: speaks and nags once free space is under a threshold set in the environment',
+      rc == 0 and h is not None and 'under' in h['systemMessage'] and 'hookSpecificOutput' in h, raw)
+rc, h, raw = hook_cli(max(used_free_pct - 1, 0))
+check('hook: stays silent while above that threshold', rc == 0 and h is None, raw)
+rc, h, raw = hook_cli('not-a-number')
+check('hook: a bad value in the environment falls back to the default', rc == 0 and h is None, raw)
+rc, h, raw = hook_cli(100, '--warn-free-pct', '0')
+check('hook: an explicit flag beats the environment', rc == 0 and h is None, raw)
+
+blocker = os.path.join(STATE, 'not-a-folder')
+open(blocker, 'w').write('x')
+env = dict(os.environ, DISK_RECLAIM_STATE=blocker)
+cp = subprocess.run([sys.executable, '-B', SS, '--status', '--hook'], input='{}', capture_output=True, text=True, env=env, timeout=60)
+check('hook: a broken state folder never fails the session', cp.returncode == 0 and 'Traceback' not in cp.stderr, cp.stdout + cp.stderr)
+cp = subprocess.run([sys.executable, '-B', SS, '--status'], capture_output=True, text=True, env=env, timeout=60)
+check('plain --status still reports a broken state folder loudly', cp.returncode != 0, cp.stdout + cp.stderr)
+
 # corrupt state never breaks status
 open(os.path.join(STATE, 'last-run.json'), 'w').write('{not json')
 open(os.path.join(STATE, 'history.tsv'), 'w').write('garbage\n')

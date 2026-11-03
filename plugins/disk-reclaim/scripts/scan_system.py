@@ -703,6 +703,14 @@ def print_markdown(items, free, total, over, a):
         print(f'\n> Note: {n}')
 
 
+def env_num(name, default):
+    """A number from the environment (so a hook's thresholds can be set in settings.json), else the default."""
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--min-mb', type=float, default=100, help='list individual items at least this big')
@@ -715,14 +723,30 @@ def main():
     ap.add_argument('--json', action='store_true')
     ap.add_argument('--status', action='store_true', help='fast status only (free space, trend, last scan and cleanup); no scan. Exit 1 if attention is needed')
     ap.add_argument('--quiet-if-ok', action='store_true', help='with --status: print nothing unless something needs attention (for hooks)')
-    ap.add_argument('--warn-free-gb', type=float, default=50, help='with --status: warn below this much free space')
-    ap.add_argument('--warn-free-pct', type=float, default=10, help='with --status: warn below this percentage free')
+    ap.add_argument('--hook', action='store_true', help='with --status: print the SessionStart hook JSON (a one-line summary for the user, and model context only when space is low). Never fails')
+    ap.add_argument('--warn-free-gb', type=float, default=env_num('DISK_RECLAIM_WARN_FREE_GB', 50),
+                    help='with --status: warn below this much free space (default 50, or $DISK_RECLAIM_WARN_FREE_GB)')
+    ap.add_argument('--warn-free-pct', type=float, default=env_num('DISK_RECLAIM_WARN_FREE_PCT', 10),
+                    help='with --status: warn below this percentage free (default 10, or $DISK_RECLAIM_WARN_FREE_PCT)')
     ap.add_argument('--max-scan-age-days', type=int, default=14, help='with --status: warn when the last saved scan is older')
     ap.add_argument('--save-state', action='store_true', help='record a summary of this scan so --status can report it (use for scheduled scans)')
     a = ap.parse_args()
     if a.status:
         from disk_status import status
-        sys.exit(status(a.warn_free_gb, a.warn_free_pct, a.max_scan_age_days, a.quiet_if_ok))
+        source = None
+        if a.hook and not sys.stdin.isatty():
+            try:
+                source = json.load(sys.stdin).get('source')
+            except Exception:
+                pass
+        try:
+            sys.exit(status(a.warn_free_gb, a.warn_free_pct, a.max_scan_age_days, a.quiet_if_ok, a.hook, source))
+        except SystemExit:
+            raise
+        except Exception:
+            if not a.hook:
+                raise
+            sys.exit(0)
     if sys.platform != 'darwin':
         sys.exit('scan_system.py knows macOS locations only (~/Library, Xcode, Colima). '
                  'Use scan.py for a directory on any system, or --status for free space and trend.')

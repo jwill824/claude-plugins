@@ -38,7 +38,7 @@ Upgrading from 0.1.x: the single `/disk-reclaim:disk-reclaim` skill is gone, rep
 - **Dry run first, re-check at the moment of action.** Nothing runs without `--execute`. The executor rebuilds each command from what it just verified and holds the item if anything changed since the scan.
 - **You name what to remove.** Items that need review run only when named with `--approve KEY`. Reviewed folders go to the Trash. Simulators and Docker volumes cannot, so they are labelled permanent in the dry run.
 - **Only "keep" is remembered.** A saved "remove" would approve a later scan nobody looked at.
-- **Nothing runs unattended.** The session-start hook only prints free space, and only when it is low.
+- **Nothing runs unattended.** The session-start hook scans nothing and is silent while space is fine. When free space is low (under 50 GB or 10% free by default; set `DISK_RECLAIM_WARN_FREE_GB` or `DISK_RECLAIM_WARN_FREE_PCT` to change it) it shows a one-line status and asks Claude to offer options, about 150 tokens per session start. Removal still starts only when you type `/disk-reclaim:run` or `/disk-reclaim:review`.
 
 ### Requirements
 
