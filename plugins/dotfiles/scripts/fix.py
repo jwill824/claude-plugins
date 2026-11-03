@@ -47,12 +47,12 @@ def fingerprint(i):
     newest = st.st_mtime
     if i['kind'] == 'dotitem' and not link:
         newest, _ = newest_write(p, float('inf'))
-    return {'key': i['key'], 'path': p, 'name': i['name'], 'kind': i['kind'], 'kb': i.get('kb'), 'dev': st.st_dev, 'ino': st.st_ino, 'islink': link,
+    return {'key': i['key'], 'path': p, 'name': i['name'], 'kind': i['kind'], 'kb': i.get('kb'), 'dev': st.st_dev, 'ino': st.st_ino, 'ctime': st.st_ctime_ns, 'islink': link,
             'link': os.readlink(p) if link else None, 'real_parent': os.path.realpath(os.path.dirname(p)), 'newest': int(newest or 0), 'why': i['evidence'][:3]}
 
 
 def drifted(planned, now):
-    for k in ('dev', 'ino', 'islink', 'link', 'real_parent'):
+    for k in ('dev', 'ino', 'ctime', 'islink', 'link', 'real_parent'):
         if planned[k] != now[k]:
             return k
     return 'a newer write inside it' if now['newest'] > planned['newest'] else None

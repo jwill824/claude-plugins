@@ -808,13 +808,28 @@ finally:
     fix.gates.recheck, fix.shutil.which = real_recheck, real_which
     os.path.ismount = real_ismount
     fix.device_of = real_dev
-p1 = {'dev': 1, 'ino': 2, 'islink': False, 'link': None, 'real_parent': '/a', 'newest': 100}
-check('drift is detected for each thing that identifies the item, and for a newer write', all(fix.drifted(p1, dict(p1, **{k: v})) for k, v in (('dev', 9), ('ino', 9), ('islink', True), ('link', 'x'), ('real_parent', '/b'), ('newest', 101)))
+p1 = {'dev': 1, 'ino': 2, 'ctime': 5, 'islink': False, 'link': None, 'real_parent': '/a', 'newest': 100}
+check('drift is detected for each thing that identifies the item, and for a newer write', all(fix.drifted(p1, dict(p1, **{k: v})) for k, v in (('dev', 9), ('ino', 9), ('ctime', 6), ('islink', True), ('link', 'x'), ('real_parent', '/b'), ('newest', 101)))
       and fix.drifted(p1, dict(p1)) is None, '')
+
+probe = os.path.join(HOME, '.fixprobe')
+write(os.path.join(probe, 'x'), 'data')
+age_tree(probe, 200)
+pi = {'key': 'dotitem:' + probe, 'kind': 'dotitem', 'path': probe, 'name': '.fixprobe', 'evidence': ['x'], 'kb': 1}
+fp_before = fix.fingerprint(pi)
+time.sleep(0.02)
+shutil.rmtree(probe)
+write(os.path.join(probe, 'x'), 'data')
+age_tree(probe, 200)
+fp_after = fix.fingerprint(pi)
+fp_after['ino'], fp_after['dev'], fp_after['newest'] = fp_before['ino'], fp_before['dev'], fp_before['newest']   # as if the filesystem reused the inode and the times were set back
+check('a folder deleted and recreated with the same name, inode and back-dated times is still seen as changed (its own change time cannot be faked)', fix.drifted(fp_before, fp_after) == 'ctime', fix.drifted(fp_before, fp_after))
+shutil.rmtree(probe)
 
 # at execute time: changed since the plan
 rc, out, err = fx('--key', ST, '--key', HX, '--plan', PLAN)
 assert rc == 0, out
+time.sleep(0.05)
 shutil.rmtree(os.path.join(HOME, '.sts4'))
 write(os.path.join(HOME, '.sts4/b'), 'data')
 age_tree(os.path.join(HOME, '.sts4'), 200)
