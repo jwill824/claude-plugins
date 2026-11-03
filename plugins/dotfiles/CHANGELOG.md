@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.3.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.2.1...dotfiles-v0.3.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** show when each item was installed ([#15](https://github.com/jwill824/claude-plugins/issues/15)) ([943f1e4](https://github.com/jwill824/claude-plugins/commit/943f1e40076df81ac0a8ecf3b6c310c7b9f683c6))
+
 ## [0.2.1](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.2.0...dotfiles-v0.2.1) (2026-11-03)
 
 
