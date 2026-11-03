@@ -43,8 +43,10 @@ AMBIG = {
     '.venv': ('dependency cache', ('requirements.txt', 'pyproject.toml', 'uv.lock', 'setup.py')),
 }
 LOG_DIRS = {'logs', 'log'}
-KEY_EXT = ('.p12', '.pem', '.key', '.jks', '.keystore', '.pfx')
-KEY_NAMES = ('.env', '.npmrc', '.netrc', 'credentials')
+KEY_EXT = ('.p12', '.pem', '.key', '.jks', '.keystore', '.pfx', '.ppk', '.p8')
+# SSH private keys have no extension, so match their default names exactly (id_rsa.pub is a public key and does not match)
+KEY_NAMES = ('.env', '.npmrc', '.netrc', 'credentials',
+             'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk')
 
 
 def run(cmd, cwd=None, timeout=60, inp=None):

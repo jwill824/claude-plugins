@@ -7,7 +7,7 @@ Read this when deciding something the scanner did not label clearly. Every rule 
 - **Anything git tracks.** `git ls-files` inside the path must be empty. A directory named `bin/` or `build/` can hold tracked source even when its siblings are output.
 - **Uncommitted changes**: modified tracked files (staged or not), and untracked files that are not git-ignored. Untracked is not the same as disposable: it can be the only copy of a new file, test or script.
 - **Commits that exist on no remote branch.** Count them with `git rev-list --count HEAD --not --remotes`. After a prune, branches that were pushed then merged and deleted also look unpushed, so say "cannot confirm" rather than "safe" when the number is non-zero.
-- **Credentials and key material**: `.env*`, `.npmrc`, `.netrc`, `*.p12`, `*.pem`, `*.key`, `*.jks`. Never copy them into backups either.
+- **Credentials and key material**: `.env*`, `.npmrc`, `.netrc`, `credentials`, SSH private keys (`id_rsa`, `id_ed25519` and the other default names), `*.p12`, `*.pem`, `*.key`, `*.jks`, `*.keystore`, `*.pfx`, `*.ppk`, `*.p8`. Detection is by file name, two folders deep, not by content, so a key under another name is not caught. Never copy them into backups either.
 - **A locked worktree, or a repository's main checkout.**
 
 ## Git worktrees
