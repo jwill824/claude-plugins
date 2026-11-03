@@ -115,6 +115,23 @@ rc, out = run('reclaim.py', scan_file2, '--min-mb', '0', '--no-protect', '--exec
 check('an item that gained a tracked file after the scan is held, not deleted',
       os.path.exists(os.path.join(p2, 'node_modules', 'dep', 'blob.bin')), out[-300:])
 
+# ---- key material is matched by name; every default SSH key name and the extra extensions hold an item
+sys.path.insert(0, SCRIPTS)
+from scan import has_key_material
+
+def holds(filename):
+    d = os.path.join(ROOT, 'keys', filename.replace('.', '_'))
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, filename), 'w') as f:
+        f.write('x')
+    return bool(has_key_material(d))
+
+for name in ('id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk', 'ID_RSA',
+             'deploy.ppk', 'AuthKey_ABC123.p8', 'server.pem', '.env.local', 'credentials'):
+    check(f'key material: {name} holds an item', holds(name))
+for name in ('id_rsa.pub', 'idea.txt', 'bundle.js', 'README.md'):
+    check(f'not key material: {name} does not hold an item', not holds(name))
+
 # ---- platform guards and status work everywhere
 rc, out = run('scan_system.py', '--status')
 check('--status runs on this platform', rc in (0, 1) and 'Disk:' in out, f'rc={rc} {out[:200]}')
