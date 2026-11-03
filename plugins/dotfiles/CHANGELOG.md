@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.9.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.8.0...dotfiles-v0.9.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** move orphan folders and broken links to the Trash ([#21](https://github.com/jwill824/claude-plugins/issues/21)) ([eed8cae](https://github.com/jwill824/claude-plugins/commit/eed8caea20f38b837b21e49224fb5e15c21c347c))
+
 # [0.8.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.7.0...dotfiles-v0.8.0) (2026-11-03)
 
 
