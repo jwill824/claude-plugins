@@ -19,3 +19,20 @@ jobs:
             echo "== $t"
             python3 -B "$t"
           done
+
+  disk-reclaim-linux:
+    # Directory mode and --status claim to work on Linux, so run the suites that do not need macOS,
+    # and check that the macOS-only tools refuse politely instead of failing in odd ways.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run the portable disk-reclaim suites
+        run: |
+          set -e
+          for t in test_directory test_status test_decisions; do
+            echo "== $t"
+            python3 -B "plugins/disk-reclaim/tests/$t.py"
+          done
