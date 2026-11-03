@@ -1,0 +1,21 @@
+{
+  "name": "dotfiles",
+  "displayName": "Dotfiles",
+  "version": "0.1.0",
+  "description": "Audit what is installed on a Mac and who owns it: Homebrew, mise, npm, uv, cargo, applications, commands on PATH and dotfiles. Finds what no package manager claims and leftovers whose tool is gone, with evidence. Read-only; it audits dotfiles, it does not manage them.",
+  "author": {
+    "name": "Jeff Williams"
+  },
+  "homepage": "https://github.com/jwill824/claude-plugins/tree/main/plugins/dotfiles",
+  "repository": "https://github.com/jwill824/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "dotfiles",
+    "inventory",
+    "audit",
+    "homebrew",
+    "mise",
+    "cleanup",
+    "macos"
+  ]
+}
