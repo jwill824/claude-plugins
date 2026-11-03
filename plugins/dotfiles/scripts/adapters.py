@@ -15,6 +15,9 @@ import filecmp, json, os, plistlib, re
 from common import run
 
 
+ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')   # exact ids only: a pattern with a wildcard never matches
+
+
 def result(name, status, detail='', packages=None, roots=None, claims=None, signals=None, extra=None):
     return {'name': name, 'status': status, 'detail': detail, 'packages': packages or [], 'roots': roots or [],
             'claims': claims or {}, 'signals': signals or [], 'extra': extra or {}}
@@ -34,7 +37,7 @@ def brew(ctx, prior):
         data = json.loads(out)
     except ValueError:
         return result('brew', 'failed', 'unreadable JSON from `brew info`')
-    packages, cask_apps = [], {}
+    packages, cask_apps, cask_ids, cask_quit = [], {}, {}, {}
     for f in data.get('formulae') or []:
         inst = f.get('installed') or []
         packages.append({'owner': 'brew', 'kind': 'formula', 'name': f.get('name', ''), 'version': (inst[-1].get('version', '') if inst else ''),
@@ -45,6 +48,21 @@ def brew(ctx, prior):
         packages.append({'owner': 'brew', 'kind': 'cask', 'name': token, 'version': str(c.get('installed') or ''), 'apps': apps})
         for a in apps:
             cask_apps[a] = token
+        uninstall = {'quit': [], 'pkgutil': [], 'launchctl': []}
+        for art in (c.get('artifacts') or []):
+            if isinstance(art, dict):
+                for u in art.get('uninstall') or []:
+                    if isinstance(u, dict):
+                        for k in uninstall:
+                            v = u.get(k)
+                            uninstall[k] += [x for x in ([v] if isinstance(v, str) else (v or [])) if isinstance(x, str) and ID_RE.match(x)]
+        packages[-1]['uninstall'] = uninstall
+        # pkgutil ids are the packages the cask installs: proof of ownership. quit ids are apps to close before uninstalling,
+        # which may be someone else's (Teams quits Microsoft AutoUpdate, ChatGPT quits Codex): a hint, never proof.
+        for bid in uninstall['pkgutil']:
+            cask_ids.setdefault(bid, token)
+        for bid in uninstall['quit']:
+            cask_quit.setdefault(bid, token)
     roots = [{'prefix': os.path.join(prefix, d), 'owner': 'brew'} for d in ('Cellar', 'Caskroom', 'opt')]
     signals, warnings = [], []
     st, out = run(['brew', 'autoremove', '-n'])
@@ -59,7 +77,8 @@ def brew(ctx, prior):
     elif st == 'failed':
         warnings.append(f'brew autoremove -n: {out}')
     claims = {os.path.join(prefix, 'bin', 'brew'): ('brew', 'Homebrew itself')}
-    return result('brew', 'ok', '; '.join(warnings), packages, roots, claims, signals, extra={'prefix': prefix, 'cask_apps': cask_apps})
+    return result('brew', 'ok', '; '.join(warnings), packages, roots, claims, signals, extra={'prefix': prefix, 'cask_apps': cask_apps, 'cask_bundle_ids': cask_ids, 'cask_quit_ids': cask_quit,
+                                                                    'cask_tokens': sorted(p['name'] for p in packages if p['kind'] == 'cask')})
 
 
 def mise(ctx, prior):
@@ -236,6 +255,9 @@ def mas(ctx, prior):
 def apps(ctx, prior):
     """Application bundles, and who put each there: a Homebrew cask, the App Store (receipt), Apple, or nobody we can see."""
     cask_apps = prior.get('brew', {}).get('extra', {}).get('cask_apps', {})
+    cask_ids = prior.get('brew', {}).get('extra', {}).get('cask_bundle_ids', {})
+    cask_tokens = set(prior.get('brew', {}).get('extra', {}).get('cask_tokens', []))
+    cask_quit = prior.get('brew', {}).get('extra', {}).get('cask_quit_ids', {})
     brew_failed = prior.get('brew', {}).get('status') == 'failed'
     packages, roots, warnings = [], [], []
     bundles = []
@@ -260,17 +282,27 @@ def apps(ctx, prior):
             bid, ver = str(info.get('CFBundleIdentifier', '')), str(info.get('CFBundleShortVersionString', ''))
         except (OSError, ValueError, plistlib.InvalidFileException):
             warnings.append(f'{entry}: unreadable Info.plist')
+        tier, suggestions = None, []
         if entry in cask_apps:
-            owner, how = 'brew', f'Homebrew cask {cask_apps[entry]}'
+            owner, how, tier = 'brew', f'Homebrew cask {cask_apps[entry]}', 'exact'
+        elif bid and bid in cask_ids:
+            owner, how, tier = 'brew', f'Homebrew cask {cask_ids[bid]}: this app\'s bundle id ({bid}) is in the list of packages it installs', 'exact'
         elif os.path.isdir(os.path.join(p, 'Contents', '_MASReceipt')):
-            owner, how = 'mas', 'has an App Store receipt'
+            owner, how, tier = 'mas', 'has an App Store receipt', 'exact'
         elif bid.startswith('com.apple.'):
             owner, how = 'apple', 'Apple bundle id'
         elif brew_failed:
             owner, how = 'unknown', 'Homebrew could not be read, so a cask cannot be ruled out'
         else:
             owner, how = 'manual', 'no cask, no App Store receipt: installed by hand'
-        packages.append({'owner': owner, 'kind': 'app', 'name': entry[:-4], 'version': ver, 'path': p, 'bundle_id': bid, 'how': how})
+            if bid in cask_quit:
+                suggestions.append({'manager': 'brew', 'candidate': cask_quit[bid], 'tier': 'candidate',
+                                    'evidence': f'cask {cask_quit[bid]} lists this app\'s bundle id only in its quit list, which does not mean it installs it'})
+            slug = re.sub(r'[^a-z0-9]+', '-', entry[:-4].lower()).strip('-')
+            if slug in cask_tokens:
+                suggestions.append({'manager': 'brew', 'candidate': slug, 'tier': 'candidate',
+                                    'evidence': f'an installed cask is named {slug}, but it does not install this app (name match only)'})
+        packages.append({'owner': owner, 'kind': 'app', 'name': entry[:-4], 'version': ver, 'path': p, 'bundle_id': bid, 'how': how, 'tier': tier, 'suggestions': suggestions})
         roots.append({'prefix': p, 'owner': 'app:' + owner})
     return result('apps', 'ok', '; '.join(warnings), packages, roots)
 
