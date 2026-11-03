@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.8.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.7.0...dotfiles-v0.8.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** an interactive map that works fully offline ([#20](https://github.com/jwill824/claude-plugins/issues/20)) ([70e141d](https://github.com/jwill824/claude-plugins/commit/70e141d00e7e395ad345720d12efe050b146feee))
+
 # [0.7.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.6.0...dotfiles-v0.7.0) (2026-11-03)
 
 
