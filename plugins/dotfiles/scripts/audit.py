@@ -220,6 +220,7 @@ def newest_write(path, stop_after, limit=60000):
 
 def scan_dots(ctx, results, refs, idx, uncertain, deadline, want_sizes, active_days):
     home = ctx.home
+    declared = {s['tool'].lower(): (name, s) for name, res in results.items() for s in res['signals'] if s.get('cls') == 'missing' and s.get('tool')}
     rels = sorted(n for n in os.listdir(home) if n.startswith('.'))
     for sub in ('.config', '.local/share', '.local/state', '.cache'):
         d = os.path.join(home, sub)
@@ -258,6 +259,11 @@ def scan_dots(ctx, results, refs, idx, uncertain, deadline, want_sizes, active_d
                 continue
             found = refs.find_path(rel)
             need = ', '.join(f'`{n}`' for n in e.needles)
+            gone = next((declared[n] for n in e.needles if n in declared), None)
+            if gone:
+                items.append(item('dotitem', rel, p, e.tool, 'referenced',
+                                  [f"{gone[0]} declares {e.tool} but it is not installed ({gone[1]['evidence'][:110]}): the folder may be waiting for it"], kb=kb))
+                continue
             if found:
                 items.append(item('dotitem', rel, p, e.tool, 'referenced',
                                   [f'{e.tool} is not installed (looked for {need}), but config files mention this folder'], kb=kb, refs=found))
@@ -291,7 +297,7 @@ def scan_apps_and_signals(ctx, results, deadline, want_sizes):
                           tier=a.get('tier'), suggestions=a.get('suggestions', []), installed_at=a.get('installed_at'), date_source=a.get('date_source')))
     for name, res in results.items():
         for s in res['signals']:
-            items.append(item(s['kind'], s['name'], s['path'], name, 'orphaned', [s['evidence']]))
+            items.append(item(s['kind'], s['name'], s['path'], name, s.get('cls', 'orphaned'), [s['evidence']]))
     return items
 
 
@@ -355,7 +361,7 @@ def find_duplicates(ctx, results, bins):
     return dups, versions
 
 
-def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False):
+def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False, dead_path=()):
     t0 = time.time()
     ctx = Ctx(home, path_dirs, app_dirs)
     results = adapters.collect(ctx)
@@ -372,6 +378,16 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
                 if p.get('path') in szs:
                     p['kb'] = szs[p['path']]
     items = bins + scan_apps_and_signals(ctx, results, deadline, want_sizes) + scan_dots(ctx, results, refs, idx, uncertain, deadline, want_sizes, active_days)
+    for d in (d for d in dead_path if not any(under(d, sp) for sp in SYSTEM_PREFIXES)):   # PATH entries that point nowhere (OS-managed ones are not the user's): personal config, never a cleanup candidate
+        why = 'is not a folder' if os.path.lexists(d) else 'does not exist'
+        items.append(item('path-dead', d, d, 'none', 'config', [f'on PATH, but it {why}']))
+    for i in items:          # a missing toolchain notes the folder that is waiting for it
+        if i['cls'] == 'missing':
+            tool = i['name'].split('@')[0].split(':')[-1].lower()
+            for d in items:
+                e = knowledge.lookup(d['name']) if d['kind'] == 'dotitem' else None
+                if e and tool in e.needles:
+                    i['evidence'].append(f"its folder {tilde(d['path'], home)} is present")
     now = time.time()
     for i in items:      # dates for what the adapters did not already date: folders, unmanaged commands, leftovers
         if i['installed_at'] is None and i['path'] and (i['kind'] in ('dotitem', 'mise-prunable') or (i['kind'] == 'binary' and i['cls'] == 'unmanaged')):
@@ -385,7 +401,12 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
         for p in res['packages']:
             inventory.setdefault(p['owner'], []).append({k: v for k, v in p.items() if k in ('kind', 'name', 'version', 'requested', 'bundled', 'node', 'bundle_id', 'how', 'path', 'kb', 'installed_at', 'date_source')})
     dups, versions = find_duplicates(ctx, results, bins)
+    checks = []
+    for n in ('mise', 'brew', 'rustup'):
+        r = results[n]
+        checks.append({'source': n, 'status': 'not installed' if r['status'] == 'missing' else 'checked' if r['status'] == 'ok' and r['extra'].get('missing_check') == 'checked' else 'failed'})
     return {
+        'missing_checks': checks,
         'duplicates': dups, 'versions': versions, 'duplicates_incomplete': [n for n, r in results.items() if r['status'] == 'failed'],
         'generated': datetime.datetime.now().isoformat(timespec='seconds'), 'home': home, 'seconds': round(time.time() - t0, 1),
         'adapters': [{'name': n, 'status': r['status'], 'detail': r['detail'], 'packages': len(r['packages'])} for n, r in results.items()],
@@ -427,7 +448,7 @@ def render(rep, show_all=False):
     cnt = {}
     for i in items:
         cnt[(i['cls'], i['kind'])] = cnt.get((i['cls'], i['kind']), 0) + 1
-    order = ['managed', 'owned', 'unmanaged', 'orphaned', 'referenced', 'unknown', 'unattributed', 'config', 'system']
+    order = ['managed', 'owned', 'unmanaged', 'orphaned', 'referenced', 'missing', 'unknown', 'unattributed', 'config', 'system']
     L += ['', '## Summary', '', '| Class | Count | Of |', '|---|---:|---|']
     for cls in order:
         parts = {k: v for (c, k), v in cnt.items() if c == cls}
@@ -477,6 +498,21 @@ def render(rep, show_all=False):
         L += ['', f"## Unattributed dot-items ({len(una)})", '', f"Not in the knowledge table ({rep['knowledge_entries']} entries). Largest 15:", '', '| Item | Size | Mentioned by |', '|---|---:|---|']
         for i in una[:15]:
             L.append(f"| `{i['name']}` | {human(i['kb']) if i['kb'] else ''} | {', '.join(i['referenced_by']) or ''} |")
+    miss = by('missing')
+    checks = rep.get('missing_checks', [])
+    L += ['', f'## Missing toolchains and dead PATH entries ({len(miss)} missing)', '']
+    if miss:
+        L += ['Declared or expected by a manager, but not installed. Not orphans: installing them (or editing the config that declares them) is up to you.', '', '| What | Reported by | Evidence |', '|---|---|---|']
+        L += [f"| `{i['name']}` | {i['owner']} | {'; '.join(i['evidence'])[:260]} |" for i in miss]
+    done = [c['source'] for c in checks if c['status'] == 'checked']
+    bad = [c['source'] for c in checks if c['status'] == 'failed']
+    if not miss and done:
+        L.append(f"None reported by {', '.join(done)}.")
+    if bad:
+        L.append(f"**Could not check {', '.join(bad)}**, so nothing is said about what they might be missing.")
+    dead = by('config', 'path-dead')
+    if dead:
+        L += ['', 'PATH entries (on the audit\'s PATH, which may differ from your shell\'s) that point nowhere:'] + [f"- `{tilde(i['path'], home)}`: {i['evidence'][0]}" for i in dead]
     dups, vers = rep.get('duplicates', []), rep.get('versions', [])
     if dups or vers or rep.get('duplicates_incomplete'):
         L += ['', f'## Duplicate installs ({len(dups)})', '']
@@ -528,13 +564,15 @@ def main():
     ap.add_argument('--active-days', type=int, default=60, help='a tool folder written to within this many days is never called an orphan')
     a = ap.parse_args()
     home = os.path.abspath(a.home)
-    path_dirs, seen = [], set()
+    path_dirs, seen, dead = [], set(), []
     for d in os.environ.get('PATH', '').split(os.pathsep):
         if d and os.path.isdir(d) and os.path.realpath(d) not in seen:
             seen.add(os.path.realpath(d))
             path_dirs.append(d)
+        elif d and os.path.isabs(d) and not os.path.isdir(d) and d not in dead:
+            dead.append(d)
     app_dirs = a.apps_dir or ['/Applications', os.path.join(home, 'Applications')]
-    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html))
+    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html), dead_path=dead)
     if a.save:
         with open(a.save, 'w') as f:
             json.dump(rep, f, indent=1)

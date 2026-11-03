@@ -78,8 +78,19 @@ def brew(ctx, prior):
                                 'evidence': '`brew autoremove -n` lists it: no installed formula depends on it'})
     elif st == 'failed':
         warnings.append(f'brew autoremove -n: {out}')
+    st, out = run(['brew', 'missing'], timeout=60, ok_codes=(0, 1))
+    if st == 'ok':
+        missing_check = 'checked'
+        for line in out.splitlines():
+            m = re.match(r'^([\w@.+/-]+): (.+)$', line.strip())
+            if m:
+                signals.append({'kind': 'missing-dependency', 'name': m.group(1), 'path': '', 'cls': 'missing', 'tool': m.group(1).split('@')[0],
+                                'evidence': f'`brew missing` says {m.group(1)} is missing: {m.group(2)[:150]}'})
+    else:
+        missing_check = 'failed'
+        warnings.append(f'brew missing: {out}')
     claims = {os.path.join(prefix, 'bin', 'brew'): ('brew', 'Homebrew itself')}
-    return result('brew', 'ok', '; '.join(warnings), packages, roots, claims, signals, extra={'prefix': prefix, 'cask_apps': cask_apps, 'cask_bundle_ids': cask_ids, 'cask_quit_ids': cask_quit,
+    return result('brew', 'ok', '; '.join(warnings), packages, roots, claims, signals, extra={'missing_check': missing_check, 'prefix': prefix, 'cask_apps': cask_apps, 'cask_bundle_ids': cask_ids, 'cask_quit_ids': cask_quit,
                                                                     'cask_tokens': sorted(p['name'] for p in packages if p['kind'] == 'cask')})
 
 
@@ -125,10 +136,21 @@ def mise(ctx, prior):
                 reasons[(m.group(1), m.group(2))] = m.group(3).strip()
         elif st == 'failed':
             warnings.append(f'mise prune --dry-run: {txt}')
+    missing_check = 'failed'
+    st, miss = run(['mise', 'ls', '--missing'])
+    if st == 'ok':
+        missing_check = 'checked'
+        for line in miss.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].lower() != 'tool':
+                signals.append({'kind': 'missing-toolchain', 'name': f"{parts[0]}@{parts[1].replace('(missing)', '')}".rstrip('@'), 'path': '', 'cls': 'missing', 'tool': parts[0].split(':')[-1],
+                                'evidence': f'`mise ls --missing` lists it: {line.strip()[:160]}'})
+    else:
+        warnings.append(f'mise ls --missing: {miss}')
     for tool, ver in prunable:
         signals.append({'kind': 'mise-prunable', 'name': f'{tool}@{ver}', 'path': installs.get((tool, ver), ''),
                         'evidence': 'mise says it is prunable: ' + reasons.get((tool, ver), '`mise ls --prunable` lists it')})
-    return result('mise', 'ok', '; '.join(warnings), packages, roots, signals=signals, extra={'shims': shims})
+    return result('mise', 'ok', '; '.join(warnings), packages, roots, signals=signals, extra={'shims': shims, 'missing_check': missing_check})
 
 
 def npm(ctx, prior):
@@ -243,7 +265,11 @@ def rustup(ctx, prior):
                 for l in out.splitlines() if l.strip() and not l.startswith('no ')]
     for p in packages:
         p['installed_at'], p['date_source'] = birth(p['path'])
-    return result('rustup', 'ok', '', packages, roots=[{'prefix': root, 'owner': 'rustup'}])
+    signals = []
+    if packages and 'default' not in out:
+        signals.append({'kind': 'missing-toolchain', 'name': 'rustup default', 'path': '', 'cls': 'missing', 'tool': 'rustup',
+                        'evidence': '`rustup toolchain list` shows installed toolchains but none is marked (default): cargo and rustc will ask for one'})
+    return result('rustup', 'ok', '', packages, roots=[{'prefix': root, 'owner': 'rustup'}], signals=signals, extra={'missing_check': 'checked'})
 
 
 def mas(ctx, prior):

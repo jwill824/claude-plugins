@@ -7,11 +7,11 @@ is a local file: it says so at the top, and nothing in it is fetched or sent any
 import html
 
 import identity
-from common import age_text
+from common import age_text, tilde
 
-GLYPH = {'managed': '●', 'owned': '●', 'unmanaged': '◇', 'orphaned': '▲', 'referenced': '◐', 'unknown': '?', 'unattributed': '·', 'config': '–', 'system': '–', 'more': '…'}
+GLYPH = {'managed': '●', 'owned': '●', 'unmanaged': '◇', 'orphaned': '▲', 'referenced': '◐', 'unknown': '?', 'missing': '○', 'unattributed': '·', 'config': '–', 'system': '–', 'more': '…'}
 LABEL = {'managed': 'Managed by a package manager', 'owned': 'Folder of an installed tool', 'unmanaged': 'Unmanaged (neutral)',
-         'orphaned': 'Orphan candidate', 'referenced': 'Referenced or recently used', 'unknown': 'Unknown', 'unattributed': 'Unattributed',
+         'orphaned': 'Orphan candidate', 'referenced': 'Referenced or recently used', 'unknown': 'Unknown', 'missing': 'Declared but not installed', 'unattributed': 'Unattributed',
          'config': 'Personal config', 'system': 'System'}
 FORMULA_GROUPS = {'brew': 'Homebrew formulae', 'mise': 'mise tools', 'npm': 'npm globals', 'uv': 'uv tools', 'rustup': 'rustup toolchains'}
 APP_GROUPS = {'brew': 'Apps: Homebrew casks', 'mas': 'Apps: App Store', 'manual': 'Apps: installed by hand', 'apple': 'Apps: Apple', 'unknown': 'Apps: unknown'}
@@ -190,6 +190,27 @@ code{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding
 '''
 
 
+def missing_section(rep):
+    items = rep['items']
+    miss = [i for i in items if i['cls'] == 'missing']
+    dead = [i for i in items if i['kind'] == 'path-dead']
+    checks = rep.get('missing_checks', [])
+    done = [c['source'] for c in checks if c['status'] == 'checked']
+    bad = [c['source'] for c in checks if c['status'] == 'failed']
+    h = f'<h2>Missing toolchains and dead PATH entries ({len(miss)} missing)</h2>'
+    if miss:
+        h += ('<p class="note">Declared or expected by a manager, but not installed. Not orphans.</p><table><thead><tr><th>What</th><th>Reported by</th><th>Evidence</th></tr></thead><tbody>'
+              + ''.join(f"<tr><td>{e(i['name'])}</td><td>{e(i['owner'])}</td><td>{e('; '.join(i['evidence']))}</td></tr>" for i in miss) + '</tbody></table>')
+    elif done:
+        h += f'<p class="note">None reported by {e(", ".join(done))}.</p>'
+    if bad:
+        h += f'<div class="warn"><b>Could not check {e(", ".join(bad))},</b> so nothing is said about what they might be missing.</div>'
+    if dead:
+        h += ("<p class=\"note\">PATH entries (on the audit's PATH, which may differ from your shell's) that point nowhere: "
+              + e('; '.join(tilde(i['path'], rep['home']) + ' (' + i['evidence'][0] + ')' for i in dead)) + '</p>')
+    return h
+
+
 def dup_section(rep):
     dups, vers = rep.get('duplicates', []), rep.get('versions', [])
     h = f'<h2>Duplicate installs ({len(dups)})</h2>'
@@ -234,7 +255,7 @@ def render(rep):
             f'<div class="tm" role="img" aria-label="Treemap of installed things by owner and size">{treemap(lv)}</div>'
             f'<div class="legend">{legend}</div>'
             '<p class="note">Block size is disk usage. Only things with a measured size are drawn; commands from managers are inside their package.</p>'
-            + dup_section(rep) +
+            + missing_section(rep) + dup_section(rep) +
             f'<h2>Sources</h2><table><thead><tr><th>Source</th><th>Status</th><th>Packages</th><th>Note</th></tr></thead><tbody>{src}</tbody></table>'
             f'<p class="note">Not read by this version: {e(", ".join(rep["not_covered"]))}. Anything that resolves into their folders is shown as unknown.</p>'
             f'<h2>Orphan candidates ({len(orph)})</h2><p class="note">Candidates, not verdicts. Click a row for the evidence and the key that /dotfiles:tidy takes.</p>'
