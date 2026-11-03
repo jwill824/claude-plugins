@@ -12,7 +12,7 @@ An adapter returns a dict:
 A 'failed' adapter matters: nothing it might have owned may be reported as unmanaged or orphaned.
 """
 import filecmp, json, os, plistlib, re
-from common import run
+from common import run, birth
 
 
 ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')   # exact ids only: a pattern with a wildcard never matches
@@ -41,11 +41,13 @@ def brew(ctx, prior):
     for f in data.get('formulae') or []:
         inst = f.get('installed') or []
         packages.append({'owner': 'brew', 'kind': 'formula', 'name': f.get('name', ''), 'version': (inst[-1].get('version', '') if inst else ''),
-                         'requested': any(i.get('installed_on_request') for i in inst), 'path': os.path.join(prefix, 'Cellar', f.get('name', ''))})
+                         'requested': any(i.get('installed_on_request') for i in inst), 'path': os.path.join(prefix, 'Cellar', f.get('name', '')),
+                         'installed_at': max([i['time'] for i in inst if isinstance(i.get('time'), (int, float))] or [None], key=lambda x: x or 0), 'date_source': 'brew'})
     for c in data.get('casks') or []:
         apps = [a for art in (c.get('artifacts') or []) if isinstance(art, dict) for a in (art.get('app') or []) if isinstance(a, str)]
         token = c.get('token') or c.get('full_token') or ''
-        packages.append({'owner': 'brew', 'kind': 'cask', 'name': token, 'version': str(c.get('installed') or ''), 'apps': apps})
+        packages.append({'owner': 'brew', 'kind': 'cask', 'name': token, 'version': str(c.get('installed') or ''), 'apps': apps,
+                         'installed_at': c.get('installed_time') if isinstance(c.get('installed_time'), (int, float)) else None, 'date_source': 'brew'})
         for a in apps:
             cask_apps[a] = token
         uninstall = {'quit': [], 'pkgutil': [], 'launchctl': []}
@@ -97,7 +99,8 @@ def mise(ctx, prior):
             if v.get('installed') is False:
                 continue
             path = v.get('install_path') or ''
-            packages.append({'owner': 'mise', 'kind': 'tool', 'name': tool, 'version': v.get('version', ''), 'path': path})
+            t, s = birth(path) if path else (None, None)
+            packages.append({'owner': 'mise', 'kind': 'tool', 'name': tool, 'version': v.get('version', ''), 'path': path, 'installed_at': t, 'date_source': s})
             installs[(tool, v.get('version', ''))] = path
     base = ''
     for p in packages:
@@ -161,7 +164,9 @@ def npm(ctx, prior):
                     ver = json.load(open(os.path.join(d, 'package.json'))).get('version', '')
                 except (OSError, ValueError):
                     pass
-                packages.append({'owner': 'npm', 'kind': 'package', 'name': name, 'version': ver, 'node': label, 'bundled': name in ('npm', 'corepack'), 'path': d})
+                t, s = birth(d)
+                packages.append({'owner': 'npm', 'kind': 'package', 'name': name, 'version': ver, 'node': label, 'bundled': name in ('npm', 'corepack'), 'path': d,
+                                 'installed_at': t, 'date_source': s})
     return result('npm', 'failed' if warnings and not packages else 'ok', '; '.join(warnings), packages, roots)
 
 
@@ -180,6 +185,7 @@ def uv(ctx, prior):
         m = re.match(r'^(\S+) v(\S+)', line)
         if m and not line.startswith('-'):
             cur = {'owner': 'uv', 'kind': 'tool', 'name': m.group(1), 'version': m.group(2), 'exes': [], 'path': os.path.join(tool_dir, m.group(1))}
+            cur['installed_at'], cur['date_source'] = birth(cur['path'])
             packages.append(cur)
         elif line.startswith('- ') and cur is not None:
             cur['exes'].append(line[2:].strip())
@@ -235,6 +241,8 @@ def rustup(ctx, prior):
         return result('rustup', 'failed', out)
     packages = [{'owner': 'rustup', 'kind': 'toolchain', 'name': l.split()[0], 'version': '', 'path': os.path.join(root, 'toolchains', l.split()[0])}
                 for l in out.splitlines() if l.strip() and not l.startswith('no ')]
+    for p in packages:
+        p['installed_at'], p['date_source'] = birth(p['path'])
     return result('rustup', 'ok', '', packages, roots=[{'prefix': root, 'owner': 'rustup'}])
 
 
@@ -302,7 +310,9 @@ def apps(ctx, prior):
             if slug in cask_tokens:
                 suggestions.append({'manager': 'brew', 'candidate': slug, 'tier': 'candidate',
                                     'evidence': f'an installed cask is named {slug}, but it does not install this app (name match only)'})
-        packages.append({'owner': owner, 'kind': 'app', 'name': entry[:-4], 'version': ver, 'path': p, 'bundle_id': bid, 'how': how, 'tier': tier, 'suggestions': suggestions})
+        t, s = birth(p)
+        packages.append({'owner': owner, 'kind': 'app', 'name': entry[:-4], 'version': ver, 'path': p, 'bundle_id': bid, 'how': how, 'tier': tier, 'suggestions': suggestions,
+                         'installed_at': t, 'date_source': s})
         roots.append({'prefix': p, 'owner': 'app:' + owner})
     return result('apps', 'ok', '; '.join(warnings), packages, roots)
 

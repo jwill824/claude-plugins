@@ -84,6 +84,32 @@ def human(kb):
         v /= 1024
 
 
+def birth(path):
+    """(epoch, source) for when something arrived here: the creation time on macOS ('birthtime'), otherwise the
+    modification time ('mtime', which is when it last changed, not when it was installed). (None, None) if it cannot
+    be read. A date is never invented."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, None
+    b = getattr(st, 'st_birthtime', None)
+    return (b, 'birthtime') if b else (st.st_mtime, 'mtime')
+
+
+def age_text(epoch, source, now=None):
+    """'13 months ago', '2.2 years ago'. A leading ~ means only a modification time was available."""
+    if not epoch:
+        return ''
+    days = ((now or time.time()) - epoch) / 86400
+    if days < 31:
+        txt = 'this month'
+    elif days < 730:
+        txt = f'{round(days / 30.44)} months ago'
+    else:
+        txt = f'{days / 365.25:.1f} years ago'
+    return ('~' if source == 'mtime' else '') + txt
+
+
 def tilde(path, home):
     """Show a path relative to the home folder, as ~/..., so reports read the same on any machine."""
     return '~' + path[len(home):] if path == home or path.startswith(home + os.sep) else path
