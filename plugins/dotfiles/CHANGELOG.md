@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.10.0...dotfiles-v0.10.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **dotfiles:** reload the same cmux tab, and hide macOS's own dead PATH entries ([#23](https://github.com/jwill824/claude-plugins/issues/23)) ([4077448](https://github.com/jwill824/claude-plugins/commit/407744887841b6f498af56585f8c053b53af8de4))
+
 # [0.10.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.9.0...dotfiles-v0.10.0) (2026-11-03)
 
 
