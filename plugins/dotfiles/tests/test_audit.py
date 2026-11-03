@@ -60,7 +60,11 @@ def build_world():
         {'name': 'foo', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
         {'name': 'cocoapods', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
         {'name': 'oldlib', 'installed': [{'version': '0.1', 'installed_on_request': False}]}],
-        'casks': [{'token': 'cask-app', 'installed': '2.0', 'artifacts': [{'app': ['Cask.app']}]}]}
+        'casks': [{'token': 'cask-app', 'installed': '2.0', 'artifacts': [{'app': ['Cask.app']}]},
+                  # a pkg cask: no app artifact, and the app's bundle id is in pkgutil, not quit (as with Microsoft Teams)
+                  {'token': 'teams-like', 'installed': '1.0', 'artifacts': [{'pkg': ['x.pkg']}, {'uninstall': [{'quit': ['com.example.updater'], 'pkgutil': ['com.example.teams', 'com.example.*']}]}]},
+                  # a cask that shares a name with an app but installs something else (a CLI)
+                  {'token': 'lookalike', 'installed': '1.0', 'artifacts': [{'binary': ['lookalike']}]}]}
     write(os.path.join(ROOT, 'brew-info.json'), json.dumps(brew_info))
     fake('brew', f'''case "$1" in
   --prefix) echo "{prefix}";;
@@ -112,7 +116,8 @@ esac''')
         write(os.path.join(cb, n), 'RUSTUP-BINARY', 0o755)
     write(os.path.join(cb, 'mystery'), 'something else entirely', 0o755)
     # applications
-    for name, bid, extra in (('Manual', 'com.example.manual', None), ('Cask', 'com.example.cask', None), ('Store', 'com.example.store', 'receipt')):
+    for name, bid, extra in (('Manual', 'com.example.manual', None), ('Cask', 'com.example.cask', None), ('Store', 'com.example.store', 'receipt'),
+                           ('Teams', 'com.example.teams', None), ('TeamsHelper', 'com.example.teams.helper', None), ('Lookalike', 'com.example.lookalike', None), ('Updater', 'com.example.updater', None)):
         d = os.path.join(HOME, 'Applications', name + '.app', 'Contents')
         os.makedirs(d)
         with open(os.path.join(d, 'Info.plist'), 'wb') as f:
@@ -179,6 +184,17 @@ check('a stranger in ~/.cargo/bin is unmanaged', g('binary', 'mystery')['cls'] =
 check('an app named by a cask is brew-managed', g('app', 'Cask')['cls'] == 'managed' and g('app', 'Cask')['owner'] == 'brew', g('app', 'Cask'))
 check('an app with an App Store receipt is managed by the store', g('app', 'Store')['owner'] == 'mas', g('app', 'Store'))
 check('an app with neither is unmanaged', g('app', 'Manual')['cls'] == 'unmanaged', g('app', 'Manual'))
+
+check('a pkg cask is matched by its bundle id, found in pkgutil, and that is exact evidence',
+      g('app', 'Teams')['cls'] == 'managed' and g('app', 'Teams')['owner'] == 'brew' and g('app', 'Teams')['tier'] == 'exact', g('app', 'Teams'))
+check('a bundle id that merely starts with a cask id does not match (equality, never prefix)', g('app', 'TeamsHelper')['cls'] == 'unmanaged', g('app', 'TeamsHelper'))
+check('an app named like an installed cask, with a different bundle id, stays unmanaged and only gets a suggestion',
+      g('app', 'Lookalike')['cls'] == 'unmanaged' and g('app', 'Lookalike')['owner'] == 'none'
+      and [s['candidate'] for s in g('app', 'Lookalike')['suggestions']] == ['lookalike'] and g('app', 'Lookalike')['suggestions'][0]['tier'] == 'candidate', g('app', 'Lookalike'))
+check('a bundle id found only in a cask\'s quit list is not proof: unmanaged, with a suggestion that says so (as with Codex and the chatgpt cask)',
+      g('app', 'Updater')['cls'] == 'unmanaged' and g('app', 'Updater')['tier'] is None
+      and g('app', 'Updater')['suggestions'][0]['candidate'] == 'teams-like' and 'quit list' in g('app', 'Updater')['suggestions'][0]['evidence'], g('app', 'Updater'))
+check('an app with no match has no suggestions', g('app', 'Manual')['suggestions'] == [], g('app', 'Manual'))
 
 # ---- manager verdicts and dot items
 check("brew's own orphan verdict is reported with its evidence", g('brew-orphan', 'oldlib') and 'autoremove' in g('brew-orphan', 'oldlib')['evidence'][0], g('brew-orphan', 'oldlib'))

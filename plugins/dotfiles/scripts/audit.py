@@ -51,9 +51,10 @@ def owner_class(owner):
     return 'managed'
 
 
-def item(kind, name, path, owner, cls, evidence, flags=(), kb=None, refs=()):
+def item(kind, name, path, owner, cls, evidence, flags=(), kb=None, refs=(), tier=None, suggestions=()):
     return {'key': f'{kind}:{path or name}', 'kind': kind, 'name': name, 'path': path, 'owner': owner, 'cls': cls,
-            'evidence': list(evidence), 'flags': list(flags), 'kb': kb, 'referenced_by': list(refs)}
+            'evidence': list(evidence), 'flags': list(flags), 'kb': kb, 'referenced_by': list(refs),
+            'tier': tier, 'suggestions': list(suggestions)}
 
 
 def uncertain_why(results, refs):
@@ -282,7 +283,8 @@ def scan_apps_and_signals(ctx, results, deadline, want_sizes):
     for a in apps:
         cls = {'brew': 'managed', 'mas': 'managed', 'apple': 'system', 'manual': 'unmanaged'}.get(a['owner'], 'unknown')
         owner = {'manual': 'none'}.get(a['owner'], a['owner'])
-        items.append(item('app', a['name'], a['path'], owner, cls, [a['how']], kb=szs.get(a['path'])))
+        items.append(item('app', a['name'], a['path'], owner, cls, [a['how']] + [s['evidence'] for s in a.get('suggestions', [])], kb=szs.get(a['path']),
+                          tier=a.get('tier'), suggestions=a.get('suggestions', [])))
     for name, res in results.items():
         for s in res['signals']:
             items.append(item(s['kind'], s['name'], s['path'], name, 'orphaned', [s['evidence']]))
@@ -383,7 +385,8 @@ def render(rep, show_all=False):
         for i in unm_b:
             L.append(f"| `{tilde(i['path'], home)}` | {human(i['kb'])} | {', '.join(i['referenced_by']) or 'no config file mentions it'} |")
     if unm_a:
-        L += ['', f"Applications installed by hand ({len(unm_a)}): " + ', '.join(f"{i['name']} ({human(i['kb'])})" for i in sorted(unm_a, key=lambda i: -(i['kb'] or 0)))]
+        L += ['', f"Applications installed by hand ({len(unm_a)}): " + ', '.join(f"{i['name']} ({human(i['kb'])})" + (f" [name match: cask `{i['suggestions'][0]['candidate']}`]" if i['suggestions'] else '')
+                                                                  for i in sorted(unm_a, key=lambda i: -(i['kb'] or 0)))]
     if unm_d:
         L += ['', 'Folders of tools that install themselves: ' + ', '.join(f"`{i['name']}`" for i in unm_d)]
     unk = by('unknown')
