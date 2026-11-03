@@ -820,8 +820,8 @@ write(os.path.join(HOME, '.sts4/b'), 'data')
 age_tree(os.path.join(HOME, '.sts4'), 200)
 write(os.path.join(HOME, '.config/helix/new-file'), 'written after the plan')
 rc, out, err = fx('--execute', '--plan', PLAN)
-check('an item replaced after the plan (a new folder under the same name) is held as changed, and one written to after the plan is held too, and nothing moves',
-      'changed since the plan was made (ino' in out and 'wrote to it within' in out and os.path.exists(os.path.join(HOME, '.sts4')) and os.path.exists(os.path.join(HOME, '.config/helix')) and rc != 0, out)
+check('an item replaced after the plan (a new folder under the same name; some filesystems reuse the inode, so only the prefix of the reason is pinned) is held as changed, and one written to after the plan is held too, and nothing moves',
+      'changed since the plan was made (' in out and 'wrote to it within' in out and os.path.exists(os.path.join(HOME, '.sts4')) and os.path.exists(os.path.join(HOME, '.config/helix')) and rc != 0, out)
 os.unlink(os.path.join(HOME, '.config/helix/new-file'))
 age_tree(os.path.join(HOME, '.config/helix'), 200)
 zsh0 = open(os.path.join(HOME, '.zshrc')).read()
