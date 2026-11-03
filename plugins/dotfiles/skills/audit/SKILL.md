@@ -1,7 +1,7 @@
 ---
 name: audit
-description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break, and can write an HTML map of it. Read-only. Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
-argument-hint: "[--html FILE] [--all] [--json]"
+description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break, and can write an HTML map of it. Read-only, except that the checker may let Homebrew refresh its own name index (`--offline` forbids it). Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
+argument-hint: "[--html FILE] [--all] [--json] [--offline] [--check NAME]"
 ---
 
 # audit
@@ -16,6 +16,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/audit.py --save "$SCAN" $ARGUMENTS
 ```
 
 It takes under a minute (most of it is sizing folders). `--all` lists every Homebrew formula, not only the ones you asked for. `--json` prints the full result instead of the report. `--html FILE` also writes a self-contained map: a treemap of what is installed by owner and size, with the orphan, referenced, unknown and unmanaged lists underneath (it sizes every package too, so it takes a little longer). The saved JSON is what `/dotfiles:tidy` reads.
+
+`--offline` stops Homebrew from refreshing its own name index while the checker searches it. Without it, `brew search` follows Homebrew's own staleness rule (about once a day), which may use the network and rewrites Homebrew's cache, and nothing else; the report's "Adoption candidates" section says whether the index was *refreshed* or *cached*. Tell the user when it was refreshed. `--check NAME` (repeatable) also looks for a manager that offers a name the user types.
 
 Open the map locally. It names folders, apps and commands on this machine, so publish it as an Artifact only if the user asks.
 
@@ -43,6 +45,7 @@ Start with the **Sources** table. If any source failed, say so before anything e
 - References are searched in global config only (shell startup files, Claude settings and MCP configs under `~/.claude`, LaunchAgents, cron), not in project folders. An unmanaged command that "no config file mentions" may still be used by a project.
 - Dates say when *this version* arrived: Homebrew's own record, else the creation time of the folder (macOS). A leading `~` means only a modification time was available (Linux has no creation time), so it says when something last changed. Never present a `~` date as an install date. A **stale candidate** flag marks a large item (100 MB or more) that is over a year old, not green and not mentioned anywhere. It is a flag, not a verdict, and it never changes the class.
 - **Duplicate installs** are the same tool through two or more managers (node from Homebrew and mise, Python from Homebrew and mise). Names are matched by a small explicit table (`python@3.14`, `python3` and `python` are one tool; `nodejs` is `node`); a name it does not know is never reported, so a missing duplicate is possible and a false one is not. Several versions under one manager (mise node 18, 20 and 22) are only a versions line. A system copy (`/usr/bin/python3`) is a note, never a finding. **Active** is the first match on the audit's PATH, which may differ from the user's shell because the audit does not read shell startup files: say so. When a source failed the list may be incomplete, and the report says that.
+- **Adoption candidates** are suggestions for what no manager owns: a Homebrew cask or formula with the same name, or a `mise registry` entry. They are never ownership: a name match does not prove two things are the same product, so say "candidate, verify first". Nothing is installed and the command shown is text only; the user runs it themselves if they want it. A candidate never turns an unmanaged item green. "No candidate found" is said only when the search worked; "could not check" means the search failed, and says nothing about whether a candidate exists.
 - **Missing toolchains** (class `missing`) are what a manager declares or expects but has not installed: `mise ls --missing`, `brew missing` (a formula whose dependency is gone) and a rustup with toolchains but no default. They are not orphans and tidy refuses them. A folder whose tool a manager declares is shown as *referenced*, not orphaned, because the tool is wanted. "None reported" is said only for sources whose check succeeded; a check that failed says "could not check", never "none".
 - **Dead PATH entries** are folders on the audit's PATH that do not exist (class `config`, never a candidate). The audit's PATH may differ from the user's shell, so they are leads to look at, not proof the shell has them. OS-managed entries are left out.
 - The report names things on this machine. Do not publish it or paste it anywhere shared.
