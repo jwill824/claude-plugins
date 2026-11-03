@@ -110,7 +110,7 @@ Not read yet, and shown as **unknown** when a command resolves into them: `pipx`
 
 1. Create `plugins/<name>/.claude-plugin/plugin.json` and put skills in `plugins/<name>/skills/<skill>/SKILL.md` (hooks in `hooks/hooks.json`, MCP servers in `.mcp.json`).
 2. Add an entry to `.claude-plugin/marketplace.json` with `"source": "./plugins/<name>"`.
-3. Copy `plugins/disk-reclaim/.releaserc.json` to `plugins/<name>/.releaserc.json` and replace `disk-reclaim` with `<name>` everywhere (tag format, rule scopes, changelog and `plugin.json` paths). That is what releases the plugin.
+3. Copy `plugins/disk-reclaim/.releaserc.json` to `plugins/<name>/.releaserc.json` and replace `disk-reclaim` with `<name>` everywhere (tag format, rule scopes, the `scope` of the notes generator, changelog and `plugin.json` paths). That is what releases the plugin.
 4. Run `claude plugin validate .`.
 
 ## Releases
@@ -127,7 +127,7 @@ A plugin releases only for commits **scoped to it**. Squash-merged PR titles bec
 | `feat(disk-reclaim)!: ...` or a `BREAKING CHANGE:` footer | major |
 | `feat: ...`, `feat(other-plugin): ...`, `docs`, `ci`, `chore`, `test`, `refactor` | none |
 
-An unscoped `feat:` deliberately does not release anything, because in a repo with several plugins it would release all of them. The release notes for a plugin list every `feat` and `fix` since its last tag, so keep titles scoped. The release commit (`chore(release): ...`) updates `plugin.json` and the plugin's `CHANGELOG.md` directly on `main` with the `GH_TOKEN` secret, which the factory provides.
+An unscoped `feat:` deliberately does not release anything, because in a repo with several plugins it would release all of them. A plugin's release notes list only the commits scoped to it, through `release/scope-notes.mjs` (semantic-release has no per-plugin filter of its own), so another plugin's commits never show up in them. The release commit (`chore(release): ...`) updates `plugin.json` and the plugin's `CHANGELOG.md` directly on `main` with the `GH_TOKEN` secret, which the factory provides.
 
 ## Licence
 
