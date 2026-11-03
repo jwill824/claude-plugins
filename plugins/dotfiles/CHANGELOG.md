@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.6.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.5.0...dotfiles-v0.6.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** suggest which manager could own what no manager owns ([#18](https://github.com/jwill824/claude-plugins/issues/18)) ([25e019c](https://github.com/jwill824/claude-plugins/commit/25e019cc634be8a0a19533ed9dddb57dbb90fcfa))
+
 # [0.5.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.4.0...dotfiles-v0.5.0) (2026-11-03)
 
 
