@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.4.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.3.0...dotfiles-v0.4.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** report tools installed through more than one manager ([#16](https://github.com/jwill824/claude-plugins/issues/16)) ([e9d5a27](https://github.com/jwill824/claude-plugins/commit/e9d5a2748229d6e3ed9ef56048aee98ec537683b))
+
 # [0.3.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.2.1...dotfiles-v0.3.0) (2026-11-03)
 
 
