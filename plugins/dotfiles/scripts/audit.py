@@ -22,7 +22,7 @@ Classes:
 import argparse, datetime, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import adapters, checker, common, identity, knowledge
+import accepted, adapters, checker, common, identity, knowledge
 from common import human, sizes, tilde, birth, age_text
 from refs import Refs
 
@@ -58,7 +58,7 @@ STALE_KB = 100 * 1024     # and large enough to be worth a look
 def item(kind, name, path, owner, cls, evidence, flags=(), kb=None, refs=(), tier=None, suggestions=(), installed_at=None, date_source=None):
     return {'key': f'{kind}:{path or name}', 'kind': kind, 'name': name, 'path': path, 'owner': owner, 'cls': cls,
             'evidence': list(evidence), 'flags': list(flags), 'kb': kb, 'referenced_by': list(refs),
-            'tier': tier, 'suggestions': list(suggestions), 'installed_at': installed_at, 'date_source': date_source, 'check': None}
+            'tier': tier, 'suggestions': list(suggestions), 'installed_at': installed_at, 'date_source': date_source, 'check': None, 'accepted': None, 'acceptance_void': None}
 
 
 def uncertain_why(results, refs):
@@ -361,7 +361,7 @@ def find_duplicates(ctx, results, bins):
     return dups, versions
 
 
-def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False, dead_path=(), check_names=()):
+def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False, dead_path=(), check_names=(), accepted_records=None, accepted_warning=None, accepted_file=None):
     t0 = time.time()
     ctx = Ctx(home, path_dirs, app_dirs)
     results = adapters.collect(ctx)
@@ -396,6 +396,18 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
         have = {s_['candidate'] for s_ in i['suggestions']}
         i['suggestions'] += [s_ for s_ in sugg.get(i['key'], []) if s_['candidate'] not in have]
         i['check'] = outcome.get(i['key'])
+    records = accepted_records or {}
+    for i in items:      # what the user chose to keep: counts as resolved, but only while the class is the one they judged
+        r = records.get(i['key'])
+        if r and r['cls'] == i['cls']:
+            i['accepted'] = {'note': r['note'], 'date': r.get('date', ''), 'name': r.get('name', i['name'])}
+        elif r:
+            i['acceptance_void'] = {'note': r['note'], 'date': r.get('date', ''), 'cls': r['cls']}
+    cnt_cls = lambda f: sum(1 for i in items if f(i))
+    coverage = {'green': cnt_cls(lambda i: i['cls'] in ('managed', 'owned')),
+                'accepted': cnt_cls(lambda i: i['cls'] in accepted.UNRESOLVED and i['accepted']),
+                'unresolved': cnt_cls(lambda i: i['cls'] in accepted.UNRESOLVED and not i['accepted'])}
+    coverage['total'] = sum(coverage.values())
     now = time.time()
     for i in items:      # dates for what the adapters did not already date: folders, unmanaged commands, leftovers
         if i['installed_at'] is None and i['path'] and (i['kind'] in ('dotitem', 'mise-prunable') or (i['kind'] == 'binary' and i['cls'] == 'unmanaged')):
@@ -414,6 +426,7 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
         r = results[n]
         checks.append({'source': n, 'status': 'not installed' if r['status'] == 'missing' else 'checked' if r['status'] == 'ok' and r['extra'].get('missing_check') == 'checked' else 'failed'})
     return {
+        'coverage': coverage, 'accepted_file': tilde(accepted_file, home) if accepted_file else None, 'accepted_warning': accepted_warning,
         'missing_checks': checks, 'checker': header,
         'checked_names': [{'name': t, 'suggestions': sugg.get('typed:' + t, []), 'outcome': outcome.get('typed:' + t)} for t in check_names],
         'duplicates': dups, 'versions': versions, 'duplicates_incomplete': [n for n, r in results.items() if r['status'] == 'failed'],
@@ -464,7 +477,22 @@ def render(rep, show_all=False):
         if parts:
             L.append(f"| {cls} | {sum(parts.values())} | {', '.join(f'{v} {k}' for k, v in sorted(parts.items()))} |")
 
-    orph = sorted(by('orphaned'), key=lambda i: -(i['kb'] or 0))
+    cov = rep.get('coverage')
+    if cov:
+        L += ['', f"**Coverage:** {cov['green']} green (owned by a manager), {cov['accepted']} accepted, **{cov['unresolved']} unresolved** (of {cov['total']} tools and items; config files and system files are not counted)."]
+    if rep.get('accepted_warning'):
+        L += ['', f"**Accepted state:** {rep['accepted_warning']}"]
+    acc = [i for i in items if i['accepted']]
+    void = [i for i in items if i['acceptance_void']]
+    if acc:
+        L += ['', f"## Accepted ({len(acc)})", '', f"Kept as they are, on your say-so (recorded in `{rep.get('accepted_file')}`). They count as resolved and `/dotfiles:tidy` will not offer them.", '',
+              '| What | Class | Note | Accepted |', '|---|---|---|---|']
+        L += [f"| {_name(i, home)} | {i['cls']} | {i['accepted']['note']} | {i['accepted']['date']} |" for i in acc]
+    if void:
+        L += ['', f"## Acceptances that no longer apply ({len(void)})", '', 'The item is not what it was when you accepted it, so it counts as unresolved again.', '',
+              '| What | Was | Now | Your note |', '|---|---|---|---|']
+        L += [f"| {_name(i, home)} | {i['acceptance_void']['cls']} | {i['cls']} | {i['acceptance_void']['note']} |" for i in void]
+    orph = sorted([i for i in by('orphaned') if not i['accepted']], key=lambda i: -(i['kb'] or 0))
     if orph:
         L += ['', f'## Orphan candidates ({len(orph)})', '',
               'Candidates, not verdicts. `/dotfiles:tidy` prints the commands for the ones you name.', '', '| Key | What | Size | Installed | Evidence |', '|---|---|---:|---|---|']
@@ -591,12 +619,15 @@ def main():
     ap.add_argument('--no-sizes', action='store_true')
     ap.add_argument('--offline', action='store_true', help='do not let Homebrew refresh its own name index when the checker searches it')
     ap.add_argument('--check', action='append', default=[], metavar='NAME', help='also look for a manager that offers this name (repeatable); prints suggestions only')
+    ap.add_argument('--state', metavar='FILE', help='accepted-state file to read (default: $DOTFILES_STATE, else the XDG state folder)')
     ap.add_argument('--active-days', type=int, default=60, help='a tool folder written to within this many days is never called an orphan')
     a = ap.parse_args()
     bad = [n for n in a.check if not checker.TYPED_RE.match(n)]
     if bad:
         sys.exit(f'--check takes a plain name (letters, digits, space, dot, hyphen, plus): {bad[0][:40]!r}')
     common.OFFLINE = a.offline
+    state_file = a.state or accepted.state_path()
+    records, warn = accepted.load(state_file)
     home = os.path.abspath(a.home)
     path_dirs, seen, dead = [], set(), []
     for d in os.environ.get('PATH', '').split(os.pathsep):
@@ -606,7 +637,7 @@ def main():
         elif d and os.path.isabs(d) and not os.path.isdir(d) and d not in dead:
             dead.append(d)
     app_dirs = a.apps_dir or ['/Applications', os.path.join(home, 'Applications')]
-    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html), dead_path=dead, check_names=a.check)
+    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html), dead_path=dead, check_names=a.check, accepted_records=records, accepted_warning=warn, accepted_file=state_file)
     if a.save:
         with open(a.save, 'w') as f:
             json.dump(rep, f, indent=1)

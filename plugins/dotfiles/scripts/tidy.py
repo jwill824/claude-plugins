@@ -14,6 +14,7 @@ reinstallable, and a snapshot command comes first. It never prints --zap, --forc
 import argparse, datetime, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import accepted
 from audit import newest_write
 from refs import Refs
 
@@ -30,18 +31,25 @@ def main():
     ap.add_argument('audit')
     ap.add_argument('--key', action='append', default=[], help='an item key from the audit (repeatable)')
     ap.add_argument('--active-days', type=int, default=60)
+    ap.add_argument('--state', metavar='FILE', help='accepted-state file (default: $DOTFILES_STATE, else the XDG state folder)')
     a = ap.parse_args()
     rep = json.load(open(a.audit))
     home = rep['home']
     items = {i['key']: i for i in rep['items']}
     stamp = datetime.datetime.now().strftime('%Y-%m-%d %H.%M.%S')
     refs = Refs(home)
+    records, _ = accepted.load(a.state or accepted.state_path())
     out, held, cmds, snaps = [], [], [], []
     brew_done, mise_tools = False, []
     for key in a.key:
         i = items.get(key)
         if i is None:
             held.append(f'`{key}`: not in this audit')
+            continue
+        rec = records.get(key)
+        rec = rec if rec and rec['cls'] == i['cls'] else i.get('accepted')
+        if rec:
+            held.append(f"`{key}`: held, you accepted it on {rec.get('date', '?')}: {rec['note']}")
             continue
         if i['cls'] != 'orphaned':
             held.append(f"`{key}`: not offered, it is {i['cls']} ({i['evidence'][0] if i['evidence'] else ''}); only orphan candidates are")
