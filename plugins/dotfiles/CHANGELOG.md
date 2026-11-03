@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.10.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.9.0...dotfiles-v0.10.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** open the map in a cmux browser split ([#22](https://github.com/jwill824/claude-plugins/issues/22)) ([0c63ded](https://github.com/jwill824/claude-plugins/commit/0c63ded5882d3930fa4b034260385c10a040e90b))
+
 # [0.9.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.8.0...dotfiles-v0.9.0) (2026-11-03)
 
 
