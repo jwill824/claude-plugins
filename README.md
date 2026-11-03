@@ -5,12 +5,14 @@ A [Claude Code](https://code.claude.com) plugin marketplace. Each plugin lives i
 | Plugin | What it does |
 |---|---|
 | [`disk-reclaim`](plugins/disk-reclaim) | Finds where disk space is going and reclaims it safely, for a project folder or a whole Mac |
+| [`dotfiles`](plugins/dotfiles) | Audits what is installed and who owns it: package managers, apps, commands and dotfiles. Finds what nothing claims and leftovers whose tool is gone |
 
 ## Install
 
 ```
 /plugin marketplace add jwill824/claude-plugins
 /plugin install disk-reclaim@thingstead
+/plugin install dotfiles@thingstead
 ```
 
 From a shell: `claude plugin marketplace add jwill824/claude-plugins` and `claude plugin install disk-reclaim@thingstead`. Update with `claude plugin update disk-reclaim`.
@@ -74,6 +76,35 @@ for t in plugins/disk-reclaim/tests/test_*.py; do python3 -B "$t"; done
 ```
 
 The suites use a fake home folder and fake `docker`, `colima` and `xcrun` programs that only log their arguments. Nothing on your machine is touched. CI runs them on macOS.
+
+## dotfiles
+
+Audits what is installed on a Mac and who owns it. It **does not manage dotfiles** (use `chezmoi`, `stow` or `brew bundle` for that): it reads, and it reports what nothing owns.
+
+| Command | What happens |
+|---|---|
+| `/dotfiles:audit` | Lists what is installed by source (Homebrew, mise, npm, uv, cargo, apps), which commands and dotfiles no package manager claims, and leftovers whose tool is gone. Read-only. Claude can start it from a plain question ("what's installed on this machine?") |
+| `/dotfiles:tidy` | Prints, and never runs, the commands for the orphan candidates you pick. Typed-only |
+
+Every item is classed by who owns it, and every claim carries its evidence:
+
+| Class | Meaning |
+|---|---|
+| **managed** | A package manager claims it (its own list or folder) |
+| **unmanaged** | Installed, but no manager claims it: a downloaded binary, an app dragged into `/Applications`. Neutral, not a to-do |
+| **orphaned** | A candidate: a manager's own verdict (`brew autoremove -n`, `mise prune --dry-run`), a broken link, or a tool folder whose tool is installed nowhere, that no config file mentions and that nothing has written to recently |
+| **referenced** | Not installed, but a config file mentions it or something wrote to it recently, so it may still be in use |
+| **unknown** | An owner could not be ruled out (a source failed, a link was unreadable, or it lives in a manager that is not read yet) |
+
+How it stays safe:
+
+- **A failed check is never evidence.** If a source cannot be read, "unmanaged" and "orphaned" become "unknown" and the report says why, at the top.
+- **Absence of a tool is weak evidence.** A folder can be in use without the tool being installed (a project's `gradlew`, an IDE, `uvx`), so recent writes and config references keep it out of the orphan list. These only ever make a verdict more cautious.
+- **Read-only, with an allow-list.** The audit only runs list and dry-run commands, and the tests check the commands the fake managers actually received.
+- **Contents are never read into the report.** Dotfiles can hold tokens, so reports name files and folders, never what is inside. References are found by searching shell startup files, Claude settings and MCP configs, LaunchAgents and cron, and only the *name of the file that matched* is reported. Project folders are not searched.
+- **`tidy` prints.** Folders and links go to the Trash, manager removals come after a snapshot command, and nothing is printed with `--zap`, `--force` or `--ignore-dependencies`. Each candidate is re-checked first.
+
+Not read yet, and shown as **unknown** when a command resolves into them: `pipx`, `gem`, `go`, `bun`, `pnpm` and version managers like `nvm`, `asdf` and `pyenv`. Which tool owns which dot-folder comes from a hand-maintained table; anything not in it is reported as unattributed, never guessed. Requires Python 3 (standard library only). The application scan is macOS-only; the rest also runs on Linux.
 
 ## Adding a plugin
 

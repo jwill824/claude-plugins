@@ -36,3 +36,24 @@ jobs:
             echo "== $t"
             python3 -B "plugins/disk-reclaim/tests/$t.py"
           done
+
+  dotfiles:
+    # The audit reads package managers and the home folder; the suite replaces the managers with fake
+    # programs that log what they are asked, so nothing on the runner is touched.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run the dotfiles suite
+        run: |
+          set -e
+          for t in plugins/dotfiles/tests/test_*.py; do
+            echo "== $t"
+            python3 -B "$t"
+          done

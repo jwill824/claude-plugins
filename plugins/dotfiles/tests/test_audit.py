@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Tests for audit.py and tidy.py against a fake home folder and fake package managers.
+
+The fake managers sit first on PATH and log every command they receive, so "the audit only ran read-only commands" is
+checked from the outside, not just by the runner's own allow-list. A secret planted in files the audit must never print
+is searched for in every output.
+
+    python3 -B tests/test_audit.py
+"""
+import json, os, plistlib, shutil, stat, subprocess, sys, tempfile, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS = os.path.join(HERE, '..', 'scripts')
+sys.path.insert(0, SCRIPTS)
+from common import ALLOWED  # noqa: E402
+
+ROOT = os.path.realpath(tempfile.mkdtemp(prefix='dotfiles-test-'))
+HOME = os.path.join(ROOT, 'home')
+FAKEBIN = os.path.join(ROOT, 'fakebin')
+LOG = os.path.join(ROOT, 'cmd.log')
+SENTINEL = 'SENTINEL-SECRET-4f8a1c'
+DAY = 86400
+FAILS = []
+
+
+def check(name, cond, detail=''):
+    print(('PASS  ' if cond else 'FAIL  ') + name + ('' if cond else f'  -> {str(detail)[:300]}'))
+    if not cond:
+        FAILS.append(name)
+
+
+def write(path, text='', mode=None, age_days=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
+        f.write(text)
+    if mode:
+        os.chmod(path, mode)
+    if age_days is not None:
+        t = time.time() - age_days * DAY
+        os.utime(path, (t, t))
+
+
+def age_tree(path, days):
+    t = time.time() - days * DAY
+    for dp, dns, fns in os.walk(path, topdown=False):
+        for n in fns + dns:
+            os.utime(os.path.join(dp, n), (t, t))
+    os.utime(path, (t, t))
+
+
+def fake(name, body):
+    write(os.path.join(FAKEBIN, name), '#!/bin/bash\necho "' + name + ' $*" >> "$DOTFILES_TEST_LOG"\n' + body, 0o755)
+
+
+def build_world():
+    os.makedirs(HOME)
+    prefix = os.path.join(HOME, 'brewprefix')
+    brew_info = {'formulae': [
+        {'name': 'foo', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
+        {'name': 'cocoapods', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
+        {'name': 'oldlib', 'installed': [{'version': '0.1', 'installed_on_request': False}]}],
+        'casks': [{'token': 'cask-app', 'installed': '2.0', 'artifacts': [{'app': ['Cask.app']}]}]}
+    write(os.path.join(ROOT, 'brew-info.json'), json.dumps(brew_info))
+    fake('brew', f'''case "$1" in
+  --prefix) echo "{prefix}";;
+  info) cat "{ROOT}/brew-info.json";;
+  autoremove) echo "==> Would autoremove 1 unneeded formulae:"; echo "oldlib";;
+  *) exit 99;;
+esac''')
+    node = os.path.join(HOME, '.local/share/mise/installs/node/22.0.0')
+    write(os.path.join(node, 'bin/node'), '', 0o755)
+    write(os.path.join(node, 'lib/node_modules/leftpad/package.json'), json.dumps({'name': 'leftpad', 'version': '1.3.0'}))
+    jq = os.path.join(HOME, '.local/share/mise/installs/jq/1.0.0')
+    write(os.path.join(jq, 'bin/jq'), '', 0o755)
+    mise_ls = {'node': [{'version': '22.0.0', 'install_path': node, 'installed': True, 'active': True}],
+               'jq': [{'version': '1.0.0', 'install_path': jq, 'installed': True, 'active': False}]}
+    write(os.path.join(ROOT, 'mise-ls.json'), json.dumps(mise_ls))
+    fake('mise', f'''case "$1 $2" in
+  "ls --json") cat "{ROOT}/mise-ls.json";;
+  "ls --prunable") echo "jq  1.0.0";;
+  "prune --dry-run") echo "mise jq@1.0.0 is prunable: no tracked config or tool stub requires jq" >&2;;
+  *) exit 99;;
+esac''')
+    fake('uv', f'''[ -n "$FAKE_UV_FAIL" ] && {{ echo "uv: boom" >&2; exit 1; }}
+case "$1 $2" in
+  "tool dir") echo "{HOME}/.local/share/uv/tools";;
+  "tool list") echo "uvtool v1.0"; echo "- uvtool";;
+  "python dir") echo "{HOME}/.local/share/uv/python";;
+  *) exit 99;;
+esac''')
+    fake('cargo', 'exit 0')
+    fake('rustup', 'echo "stable-x (default)"')
+    fake('crontab', 'echo "no crontab for user" >&2; exit 1')
+    # brew-owned command: a link from bin into the Cellar
+    write(os.path.join(prefix, 'Cellar/foo/1.0/bin/foo'), '', 0o755)
+    os.makedirs(os.path.join(prefix, 'bin'))
+    os.symlink('../Cellar/foo/1.0/bin/foo', os.path.join(prefix, 'bin/foo'))
+    write(os.path.join(prefix, 'bin/brew'), '', 0o755)
+    # uv-owned command, an unmanaged one, a fragile link, a broken link
+    write(os.path.join(HOME, '.local/share/uv/tools/uvtool/bin/uvtool'), '', 0o755)
+    lb = os.path.join(HOME, '.local/bin')
+    os.makedirs(lb, exist_ok=True)
+    os.symlink(os.path.join(HOME, '.local/share/uv/tools/uvtool/bin/uvtool'), os.path.join(lb, 'uvtool'))
+    write(os.path.join(lb, 'manual-tool'), 'x' * 2048, 0o755)
+    write(os.path.join(HOME, '.npm/_npx/x/bin/cachey'), '', 0o755)
+    os.symlink(os.path.join(HOME, '.npm/_npx/x/bin/cachey'), os.path.join(lb, 'cachey'))
+    os.symlink(os.path.join(HOME, '.npm/_npx/gone/bin/ghost'), os.path.join(lb, 'ghost'))
+    # rustup proxies and a stranger in ~/.cargo/bin
+    cb = os.path.join(HOME, '.cargo/bin')
+    for n in ('rustup', 'cargo'):
+        write(os.path.join(cb, n), 'RUSTUP-BINARY', 0o755)
+    write(os.path.join(cb, 'mystery'), 'something else entirely', 0o755)
+    # applications
+    for name, bid, extra in (('Manual', 'com.example.manual', None), ('Cask', 'com.example.cask', None), ('Store', 'com.example.store', 'receipt')):
+        d = os.path.join(HOME, 'Applications', name + '.app', 'Contents')
+        os.makedirs(d)
+        with open(os.path.join(d, 'Info.plist'), 'wb') as f:
+            plistlib.dump({'CFBundleIdentifier': bid, 'CFBundleShortVersionString': '1.0'}, f)
+        if extra:
+            os.makedirs(os.path.join(d, '_MASReceipt'))
+    # dot items
+    write(os.path.join(HOME, '.terraform.d/plugins/x'), 'old')            # tool absent, idle, unmentioned -> orphaned
+    age_tree(os.path.join(HOME, '.terraform.d'), 200)
+    write(os.path.join(HOME, '.tflint.d/cache'), 'fresh')                 # tool absent, written recently -> referenced
+    write(os.path.join(HOME, '.vfox/cache/x'), 'old')                     # tool absent, idle, but mentioned -> referenced
+    age_tree(os.path.join(HOME, '.vfox'), 200)
+    write(os.path.join(HOME, '.cocoapods/repos/x'), 'old')                # cocoapods formula installed -> owned
+    age_tree(os.path.join(HOME, '.cocoapods'), 200)
+    write(os.path.join(HOME, '.mystery-dir/x'), 'unknown to the table')
+    write(os.path.join(HOME, '.oh-my-zsh/x'), 'self-installed')
+    write(os.path.join(HOME, '.ssh/config'), f'Host x\n  IdentityFile ~/.ssh/id # {SENTINEL}\n')
+    write(os.path.join(HOME, '.npmrc'), f'//registry.npmjs.org/:_authToken={SENTINEL}\n')
+    write(os.path.join(HOME, '.zshrc'), f'export PATH="$HOME/.vfox/shims:$PATH"\nexport TOKEN={SENTINEL}\n')
+
+
+def env(**extra):
+    e = dict(os.environ, PATH=f'{FAKEBIN}:/usr/bin:/bin', DOTFILES_TEST_LOG=LOG, HOME=HOME)
+    e.update(extra)
+    return e
+
+
+def sh(script, *args, **extra):
+    p = subprocess.run([sys.executable, '-B', os.path.join(SCRIPTS, script), *args], capture_output=True, text=True, env=env(**extra), timeout=180)
+    return p.returncode, p.stdout, p.stderr
+
+
+def audit_json(**extra):
+    rc, out, err = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', '--json', **extra)
+    return rc, (json.loads(out) if rc == 0 else None), out + err
+
+
+def by_name(rep, kind, name):
+    return next((i for i in rep['items'] if i['kind'] == kind and i['name'] == name), None)
+
+
+build_world()
+rc, rep, raw = audit_json()
+check('audit.py exits 0 and returns JSON', rc == 0 and rep is not None, raw)
+if rep is None:
+    shutil.rmtree(ROOT, ignore_errors=True)
+    sys.exit(1)
+st = {a['name']: a['status'] for a in rep['adapters']}
+check('adapters report ok, and missing for tools that are not installed', st['brew'] == 'ok' and st['mise'] == 'ok' and st['uv'] == 'ok' and st['mas'] == 'missing', st)
+
+# ---- ownership of commands
+g = lambda kind, name: by_name(rep, kind, name)
+check('a command linked into the Cellar is brew-managed', g('binary', 'foo')['cls'] == 'managed' and g('binary', 'foo')['owner'] == 'brew', g('binary', 'foo'))
+check('brew itself is claimed', g('binary', 'brew')['cls'] == 'managed', g('binary', 'brew'))
+check('a uv tool linked from ~/.local/bin is uv-managed', g('binary', 'uvtool')['owner'] == 'uv' and g('binary', 'uvtool')['cls'] == 'managed', g('binary', 'uvtool'))
+check('a binary nothing claims is unmanaged, with its size', g('binary', 'manual-tool')['cls'] == 'unmanaged' and g('binary', 'manual-tool')['kb'] == 2, g('binary', 'manual-tool'))
+check('a link into a cache is flagged fragile', 'fragile' in g('binary', 'cachey')['flags'], g('binary', 'cachey'))
+check('a broken link is an orphan candidate', g('broken-link', 'ghost')['cls'] == 'orphaned', g('broken-link', 'ghost'))
+check('rustup proxies in ~/.cargo/bin are rustup-managed', g('binary', 'cargo')['owner'] == 'rustup' and g('binary', 'cargo')['cls'] == 'managed', g('binary', 'cargo'))
+check('a stranger in ~/.cargo/bin is unmanaged', g('binary', 'mystery')['cls'] == 'unmanaged', g('binary', 'mystery'))
+
+# ---- applications
+check('an app named by a cask is brew-managed', g('app', 'Cask')['cls'] == 'managed' and g('app', 'Cask')['owner'] == 'brew', g('app', 'Cask'))
+check('an app with an App Store receipt is managed by the store', g('app', 'Store')['owner'] == 'mas', g('app', 'Store'))
+check('an app with neither is unmanaged', g('app', 'Manual')['cls'] == 'unmanaged', g('app', 'Manual'))
+
+# ---- manager verdicts and dot items
+check("brew's own orphan verdict is reported with its evidence", g('brew-orphan', 'oldlib') and 'autoremove' in g('brew-orphan', 'oldlib')['evidence'][0], g('brew-orphan', 'oldlib'))
+check("mise's own prunable verdict is reported with its reason", g('mise-prunable', 'jq@1.0.0') and 'no tracked config' in g('mise-prunable', 'jq@1.0.0')['evidence'][0], g('mise-prunable', 'jq@1.0.0'))
+check('npm globals are read from every node install', any(p['name'] == 'leftpad' for p in rep['inventory'].get('npm', [])), rep['inventory'].get('npm'))
+check('a tool folder whose tool is installed nowhere, idle and unmentioned, is an orphan candidate', g('dotitem', '.terraform.d')['cls'] == 'orphaned', g('dotitem', '.terraform.d'))
+check('a tool folder written to recently is never an orphan', g('dotitem', '.tflint.d')['cls'] == 'referenced', g('dotitem', '.tflint.d'))
+check('a folder a config file mentions is referenced, naming the file only',
+      g('dotitem', '.vfox')['cls'] == 'referenced' and g('dotitem', '.vfox')['referenced_by'] == ['~/.zshrc'], g('dotitem', '.vfox'))
+check('a folder whose tool is installed is owned', g('dotitem', '.cocoapods')['cls'] == 'owned', g('dotitem', '.cocoapods'))
+check('a folder missing from the table is unattributed, never guessed', g('dotitem', '.mystery-dir')['cls'] == 'unattributed', g('dotitem', '.mystery-dir'))
+check('a self-installing tool folder gets a neutral verdict', g('dotitem', '.oh-my-zsh')['cls'] == 'unmanaged', g('dotitem', '.oh-my-zsh'))
+check('credentials and shell config are never candidates', all(g('dotitem', n)['cls'] == 'config' for n in ('.ssh', '.npmrc', '.zshrc')), [g('dotitem', n)['cls'] for n in ('.ssh', '.npmrc', '.zshrc')])
+check('nothing in a keep entry is ever orphaned', not any(i['cls'] == 'orphaned' and i['name'] in ('.ssh', '.npmrc', '.zshrc') for i in rep['items']))
+
+# ---- read-only, and no secrets anywhere
+logged = [l.strip() for l in open(LOG)] if os.path.exists(LOG) else []
+ok_cmds = {' '.join(a) for a in ALLOWED}
+check('every command the fake managers received is on the allow-list', logged and all(l in ok_cmds for l in logged), [l for l in logged if l not in ok_cmds])
+verbs = {'install', 'uninstall', 'upgrade', 'update', 'remove', 'cleanup', 'delete', '--force', '--zap'}
+# whole words only: `--installed` and `cargo install --list` are read-only
+mutating = [l for l in logged if l != 'cargo install --list' and any(w in verbs for w in l.split())]
+check('no command mutates anything', not mutating, mutating)
+check('autoremove and prune only ever ran as dry runs',
+      all(('autoremove' not in l or ' -n' in l) and ('prune' not in l or '--dry-run' in l) for l in logged), logged)
+rc, md, err = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes')
+check('the markdown report prints and carries the evidence header', rc == 0 and '## Sources' in md and 'Not read by this version' in md, md[:200])
+check('a planted secret never appears in the report or the JSON', SENTINEL not in md and SENTINEL not in raw and SENTINEL not in err, '')
+
+# ---- a failed adapter must not become evidence
+rc, rep2, raw2 = audit_json(FAKE_UV_FAIL='1')
+st2 = {a['name']: a['status'] for a in rep2['adapters']}
+check('a failing adapter is reported as failed', st2['uv'] == 'failed', st2)
+check('so an unclaimed command becomes unknown, not unmanaged', by_name(rep2, 'binary', 'manual-tool')['cls'] == 'unknown', by_name(rep2, 'binary', 'manual-tool'))
+check('and an orphan folder becomes unknown, not orphaned', by_name(rep2, 'dotitem', '.terraform.d')['cls'] == 'unknown', by_name(rep2, 'dotitem', '.terraform.d'))
+check("a manager's own verdict is still reported", by_name(rep2, 'mise-prunable', 'jq@1.0.0')['cls'] == 'orphaned')
+rc, md2, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', FAKE_UV_FAIL='1')
+check('the report says so, in a header', 'could not be read' in md2 and 'uv' in md2, md2[:400])
+
+# ---- tidy prints, re-checks, and refuses
+scan = os.path.join(ROOT, 'audit.json')
+json.dump(rep, open(scan, 'w'))
+keys = [g('dotitem', '.terraform.d')['key'], g('broken-link', 'ghost')['key'], g('brew-orphan', 'oldlib')['key'], g('mise-prunable', 'jq@1.0.0')['key']]
+rc, out, err = sh('tidy.py', scan, *sum((['--key', k] for k in keys), []))
+check('tidy prints a Trash move for an orphan folder and for a broken link', rc == 0 and out.count('mv -- ') == 2 and '.Trash/' in out, out)
+check('tidy prints the managers\' own commands, dry run first', out.index('brew autoremove --dry-run') < out.index('brew autoremove   #') and 'mise prune --dry-run jq' in out, out)
+check('tidy puts a snapshot command before any manager removal', out.index('brew bundle dump') < out.index('brew autoremove') and 'mise ls --json >' in out, out)
+check('tidy never prints a forbidden flag', not any(f in out for f in ('--zap', '--force', '--ignore-dependencies', 'rm -rf', 'sudo')), out)
+check('tidy runs nothing: the folder is still there', os.path.exists(os.path.join(HOME, '.terraform.d')))
+rc, out, err = sh('tidy.py', scan, '--key', g('binary', 'manual-tool')['key'], '--key', g('dotitem', '.vfox')['key'], '--key', g('dotitem', '.ssh')['key'], '--key', 'nonsense')
+check('tidy refuses unmanaged, referenced, config and unknown keys', rc == 0 and 'mv -- ' not in out and out.count('not offered') >= 3 and 'not in this audit' in out, out)
+write(os.path.join(HOME, '.terraform.d/new-file'), 'written after the audit')
+rc, out, err = sh('tidy.py', scan, '--key', g('dotitem', '.terraform.d')['key'])
+check('tidy holds an orphan that was written to after the audit', 'mv -- ' not in out and 'held' in out, out)
+age_tree(os.path.join(HOME, '.terraform.d'), 200)
+write(os.path.join(HOME, '.zshrc'), f'export PATH="$HOME/.terraform.d/bin:$PATH"\nexport TOKEN={SENTINEL}\n')
+rc, out, err = sh('tidy.py', scan, '--key', g('dotitem', '.terraform.d')['key'])
+check('tidy holds an orphan that a config file now mentions, and does not echo the file', 'mv -- ' not in out and '~/.zshrc' in out and SENTINEL not in out, out)
+
+shutil.rmtree(ROOT, ignore_errors=True)
+print()
+print('FAILED: ' + ', '.join(FAILS) if FAILS else 'ALL PASS')
+sys.exit(1 if FAILS else 0)

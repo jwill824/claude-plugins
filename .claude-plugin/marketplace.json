@@ -9,6 +9,13 @@
       "description": "Find where disk space is going and reclaim it safely: tiered, git-aware, re-verified before every removal.",
       "category": "productivity",
       "tags": ["disk", "cleanup", "storage", "macos"]
+    },
+    {
+      "name": "dotfiles",
+      "source": "./plugins/dotfiles",
+      "description": "Audit what is installed and who owns it: package managers, apps, commands and dotfiles. Finds what nothing claims and leftovers whose tool is gone, with evidence. Read-only.",
+      "category": "productivity",
+      "tags": ["dotfiles", "inventory", "homebrew", "mise", "audit", "macos"]
     }
   ]
 }

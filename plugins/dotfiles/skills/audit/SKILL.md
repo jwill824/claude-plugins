@@ -1,0 +1,46 @@
+---
+name: audit
+description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break. Read-only. Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
+argument-hint: "[--all] [--json]"
+---
+
+# audit
+
+Plugin root: `${CLAUDE_PLUGIN_ROOT}`. Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`.
+
+This skill only looks. It installs, removes and changes nothing, and it never reads file contents into its report: dotfiles can hold tokens, so the report names folders and files, never what is inside them.
+
+```bash
+SCAN="$(mktemp -d)/audit.json"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/audit.py --save "$SCAN" $ARGUMENTS
+```
+
+It takes under a minute (most of it is sizing folders). `--all` lists every Homebrew formula, not only the ones you asked for. `--json` prints the full result instead of the report. The saved JSON is what `/dotfiles:tidy` reads.
+
+## How to read it
+
+Every item is classed by who owns it, and every claim carries its evidence:
+
+| Class | Meaning | What to say |
+|---|---|---|
+| **managed** | A package manager claims it (the manager's own list or folder) | Nothing to do |
+| **owned** | A dot-folder that belongs to an installed tool | Nothing to do |
+| **unmanaged** | Installed, but no manager claims it: a downloaded binary, an app dragged into `/Applications` | Neutral. Say how it got here, never that it should go |
+| **orphaned** | A candidate: a manager's own orphan verdict (`brew autoremove -n`, `mise prune --dry-run`), a broken link, or a tool folder whose tool is installed nowhere, that no config file mentions and that nothing has written to recently | A candidate, never a verdict. Quote the evidence |
+| **referenced** | Not installed, but a config file mentions it or something wrote to it recently | Not an orphan. Say what references it |
+| **unknown** | An owner could not be ruled out: an adapter failed, a link was unreadable, or it lives in a manager this version does not read | Say why, and do not call it unmanaged or orphaned |
+| **unattributed** | A dot-item the knowledge table has no entry for | Never guess what it belongs to |
+| **config / system** | Personal config, state, credentials, OS files | Listed, never candidates |
+
+Start with the **Sources** table. If any source failed, say so before anything else, because every "unmanaged" and "orphaned" verdict becomes "unknown" while a source is unreadable. A source that is `missing` just means the tool is not installed.
+
+**Things to hold to:**
+
+- Never recommend removing an unmanaged, unknown, referenced or unattributed item. Only orphan candidates can be offered, and only through `/dotfiles:tidy`.
+- A tool folder can be in use without the tool being installed (a project's `gradlew`, an IDE, `uvx`). That is why recent writes and config references keep a folder out of the orphan list.
+- References are searched in global config only (shell startup files, Claude settings and MCP configs under `~/.claude`, LaunchAgents, cron), not in project folders. An unmanaged command that "no config file mentions" may still be used by a project.
+- The report names things on this machine. Do not publish it or paste it anywhere shared.
+
+## Next step
+
+Show the orphan candidates and what references the not-quite-orphans. If the user wants commands for any candidate, tell them to type `/dotfiles:tidy`; you cannot start it for them.

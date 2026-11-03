@@ -1,0 +1,50 @@
+{
+  "branches": ["main"],
+  "tagFormat": "dotfiles-v${version}",
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "type": "feat", "release": false },
+          { "type": "fix", "release": false },
+          { "type": "perf", "release": false },
+          { "breaking": true, "release": false },
+          { "scope": "dotfiles", "type": "feat", "release": "minor" },
+          { "scope": "dotfiles", "type": "fix", "release": "patch" },
+          { "scope": "dotfiles", "type": "perf", "release": "patch" },
+          { "scope": "dotfiles", "breaking": true, "release": "major" }
+        ]
+      }
+    ],
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "plugins/dotfiles/CHANGELOG.md",
+        "changelogTitle": "# Changelog"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "sed -i.bak 's/\"version\": \"[^\"]*\"/\"version\": \"${nextRelease.version}\"/' plugins/dotfiles/.claude-plugin/plugin.json && rm -f plugins/dotfiles/.claude-plugin/plugin.json.bak"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "plugins/dotfiles/CHANGELOG.md",
+          "plugins/dotfiles/.claude-plugin/plugin.json"
+        ],
+        "message": "chore(release): dotfiles ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      { "successComment": false, "failComment": false }
+    ]
+  ]
+}
