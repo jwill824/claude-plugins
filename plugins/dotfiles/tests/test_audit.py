@@ -17,6 +17,8 @@ from common import ALLOWED, age_text, birth  # noqa: E402
 ROOT = os.path.realpath(tempfile.mkdtemp(prefix='dotfiles-test-'))
 HOME = os.path.join(ROOT, 'home')
 FAKEBIN = os.path.join(ROOT, 'fakebin')
+STATE = os.path.join(ROOT, 'state')
+STATE_FILE = os.path.join(STATE, 'accepted.json')
 LOG = os.path.join(ROOT, 'cmd.log')
 SENTINEL = 'SENTINEL-SECRET-4f8a1c'
 HOSTILE = '.<img src=x onerror=alert(1)>'
@@ -171,6 +173,7 @@ esac''')
 
 def env(**extra):
     e = dict(os.environ, PATH=f'{FAKEBIN}:/usr/bin:/bin', DOTFILES_TEST_LOG=LOG, HOME=HOME)
+    e['DOTFILES_STATE'] = STATE   # never the developer's real accepted-state file
     e.pop('HOMEBREW_NO_AUTO_UPDATE', None)   # the test decides whether Homebrew may refresh, not the developer's shell
     e.update(extra)
     return e
@@ -505,6 +508,102 @@ check('the map has the adoption section and escapes what it prints', 'Adoption c
       {'checker': {'ran': True, 'index': EVIL, 'brew': EVIL, 'mise': 'ok'}, 'items': [{'cls': 'unmanaged', 'kind': 'app', 'name': EVIL, 'suggestions': [{'candidate': EVIL, 'command': EVIL, 'evidence': EVIL}]}]}), '')
 check('nothing ever installs: no logged command is an install, and no suggestion was run',
       not any(l.split()[:2] in (['brew', 'install'], ['mise', 'use'], ['mise', 'install']) for l in [l.strip() for l in open(LOG)]), '')
+
+# ---- accepted state: only a typed accept writes it, only unresolved items can be accepted, and a changed item is unresolved again
+import accepted  # noqa: E402
+
+check('the audits so far never created the accepted-state file (the audit is read-only)', not os.path.exists(STATE_FILE) and not os.path.exists(STATE))
+sa = os.path.join(ROOT, 'accept-scan.json')
+json.dump(rep, open(sa, 'w'))
+K = lambda kind, name: g(kind, name)['key']
+acc = lambda *a, **kw: sh('accept.py', sa, *a, **kw)
+rc, out, err = acc('--key', K('app', 'Manual'), '--key', K('binary', 'manual-tool'), '--key', K('broken-link', 'ghost'), '--note', 'work VPN, installed by IT')
+check('accept records the named unresolved items and says exactly where', rc == 0 and out.count('accepted `') == 3 and STATE_FILE in out, out)
+recs, warn = accepted.load(STATE_FILE)
+check('the record holds note, date, class and name', warn is None and recs[K('app', 'Manual')]['note'] == 'work VPN, installed by IT' and recs[K('app', 'Manual')]['cls'] == 'unmanaged'
+      and recs[K('app', 'Manual')]['name'] == 'Manual' and recs[K('app', 'Manual')]['date'][:2] == '20', recs)
+check('the state file is private: 0600 in a 0700 folder', oct(os.stat(STATE_FILE).st_mode & 0o777) == '0o600' and oct(os.stat(STATE).st_mode & 0o777) == '0o700', (oct(os.stat(STATE_FILE).st_mode), oct(os.stat(STATE).st_mode)))
+check('no temporary file is left behind', os.listdir(STATE) == ['accepted.json'], os.listdir(STATE))
+before_bytes = open(STATE_FILE, 'rb').read()
+rc, out, err = acc('--key', K('binary', 'foo'), '--key', K('dotitem', '.cocoapods'), '--key', K('dotitem', '.ssh'), '--key', K('app', 'Cask'), '--key', 'nonsense', '--note', 'x')
+check('managed, owned and config items, and unknown keys, cannot be accepted', rc == 1 and out.count('already fine') == 4, out)
+check('and nothing was written for them', open(STATE_FILE, 'rb').read() == before_bytes and 'not in this audit' in out, out)
+for label, args in (('an empty note', ['--note', '  ']), ('a 201-character note', ['--note', 'x' * 201]), ('a note with a control character', ['--note', 'a\x07b'])):
+    rc, out, err = acc('--key', K('app', 'Updater'), *args)
+    check(f'{label} is refused and nothing is written', rc != 0 and open(STATE_FILE, 'rb').read() == before_bytes, (rc, out, err))
+rc, out, err = acc('--key', 'app:/x\nacceptme', '--note', 'n')
+check('a key with a newline is refused', rc != 0 and 'control characters' in out + err and open(STATE_FILE, 'rb').read() == before_bytes, (out, err))
+rc, rep_a, _ = audit_json()
+ga = lambda kind, name: by_name(rep_a, kind, name)
+check('an accepted item carries the acceptance, and its class is unchanged', ga('app', 'Manual')['accepted']['note'] == 'work VPN, installed by IT' and ga('app', 'Manual')['cls'] == 'unmanaged', ga('app', 'Manual'))
+cv0, cv1 = rep['coverage'], rep_a['coverage']
+check('accepting three items moves exactly three from unresolved to accepted, and the total is unchanged',
+      cv1['accepted'] == cv0['accepted'] + 3 and cv1['unresolved'] == cv0['unresolved'] - 3 and cv1['green'] == cv0['green'] and cv1['total'] == cv0['total'], (cv0, cv1))
+manual_unres = sum(1 for i in rep_a['items'] if i['cls'] in accepted.UNRESOLVED and not i['accepted'])
+manual_green = sum(1 for i in rep_a['items'] if i['cls'] in ('managed', 'owned'))
+check('coverage equals a count made straight from the items; config and system are in neither number', cv1['unresolved'] == manual_unres and cv1['green'] == manual_green
+      and not any(i['cls'] in ('config', 'system') for i in rep_a['items'] if i['accepted']), cv1)
+rc, mda, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes')
+check('the report shows coverage and an Accepted section with the note, and no longer lists an accepted orphan as a candidate',
+      '**Coverage:**' in mda and '## Accepted (3)' in mda and 'work VPN, installed by IT' in mda and mda.count('ghost') >= 1 and K('broken-link', 'ghost') not in mda.split('## Orphan candidates')[-1].split('\n## ')[0], mda[mda.find('**Coverage'):][:500])
+# tidy: an accepted orphan is held, and still offered once forgotten
+rc, out, err = sh('tidy.py', sa, '--key', K('broken-link', 'ghost'))
+check('tidy refuses an accepted orphan and says why', 'mv -- ' not in out and 'you accepted it' in out and 'work VPN' in out, out)
+rc, out, err = acc('--forget', '--key', K('broken-link', 'ghost'))
+check('--forget removes only the named acceptance', rc == 0 and set(accepted.load(STATE_FILE)[0]) == {K('app', 'Manual'), K('binary', 'manual-tool')}, out)
+rc, out, err = sh('tidy.py', sa, '--key', K('broken-link', 'ghost'))
+check('after forgetting, tidy offers the orphan again', 'mv -- ' in out, out)
+rc, out, err = acc('--forget', '--key', K('app', 'Cask'))
+check('forgetting something that was not accepted changes nothing', rc == 1 and 'was not accepted' in out and len(accepted.load(STATE_FILE)[0]) == 2, out)
+# a changed item is unresolved again: make the accepted app managed by a cask
+bi = json.load(open(os.path.join(ROOT, 'brew-info.json')))
+bi['casks'].append({'token': 'manual-cask', 'installed': '1', 'artifacts': [{'app': ['Manual.app']}]})
+json.dump(bi, open(os.path.join(ROOT, 'brew-info.json'), 'w'))
+rc, rep_v, _ = audit_json()
+gv = by_name(rep_v, 'app', 'Manual')
+check('when an accepted item changes class the acceptance is void, and the item is unresolved or green on its merits',
+      gv['cls'] == 'managed' and gv['accepted'] is None and gv['acceptance_void']['cls'] == 'unmanaged' and gv['acceptance_void']['note'] == 'work VPN, installed by IT', gv)
+rc, mdv, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes')
+check('the report lists the acceptance that no longer applies', '## Acceptances that no longer apply (1)' in mdv, mdv[mdv.find('**Coverage'):][:600])
+bi['casks'].pop()
+json.dump(bi, open(os.path.join(ROOT, 'brew-info.json'), 'w'))
+# a corrupt file: warn, treat as empty, never touch it
+open(STATE_FILE, 'w').write('{ this is not json')
+corrupt = open(STATE_FILE, 'rb').read()
+rc, rep_c, raw_c = audit_json()
+check('a corrupt state file is a warning, not a crash, and nothing counts as accepted', rc == 0 and 'could not read the accepted file' in rep_c['accepted_warning'] and rep_c['coverage']['accepted'] == 0, rep_c.get('accepted_warning'))
+rc, out, err = acc('--key', K('app', 'Manual'), '--note', 'n')
+check('accept refuses to write over a file it cannot read, and the file is untouched', rc != 0 and open(STATE_FILE, 'rb').read() == corrupt, (out, err))
+write(STATE_FILE, json.dumps({'version': 1, 'accepted': {K('app', 'Manual'): {'note': 'kept', 'date': '2026-01-01', 'cls': 'unmanaged', 'name': 'Manual'}, 'bad': 'oops'}}))
+recs, warn = accepted.load(STATE_FILE)
+check('a malformed entry is ignored with a warning and the good one survives', list(recs) == [K('app', 'Manual')] and '1 malformed entry' in warn, (recs, warn))
+write(STATE_FILE, json.dumps({'version': 1, 'accepted': {}}))
+# the save is atomic: a crash while replacing leaves the old file whole
+import accepted as acc_mod  # noqa: E402
+good = open(STATE_FILE, 'rb').read()
+real_replace, raised = os.replace, False
+
+
+def boom(*a, **k):
+    raise OSError('simulated crash')
+
+
+os.replace = boom
+try:
+    acc_mod.save(STATE_FILE, {'x': {'note': 'n', 'cls': 'unmanaged'}})
+except OSError:
+    raised = True
+finally:
+    os.replace = real_replace
+check('a crash while saving leaves the previous file whole and no temp file behind', raised and open(STATE_FILE, 'rb').read() == good and os.listdir(STATE) == ['accepted.json'], (raised, os.listdir(STATE)))
+# hostile text is escaped or inert
+HNOTE = '<img src=x onerror=alert(1)> & "quoted"'
+rc, out, err = acc('--key', K('dotitem', HOSTILE), '--note', HNOTE)
+check('a hostile folder name and note are stored as plain text', rc == 0 and accepted.load(STATE_FILE)[0][K('dotitem', HOSTILE)]['note'] == HNOTE and out.count('\n') < 12, (rc, out, err))
+rc, rep_h, _ = audit_json()
+check('a hostile note or folder name in the accepted state does not become live markup in the map', '<img src=x onerror' not in htmlmap.render(rep_h), '')
+os.unlink(STATE_FILE)
+
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
