@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.5.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.4.0...dotfiles-v0.5.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** report missing toolchains and dead PATH entries ([#17](https://github.com/jwill824/claude-plugins/issues/17)) ([19de974](https://github.com/jwill824/claude-plugins/commit/19de97425cb9fb62eeb22894cb3f2fcfe632d6df))
+
 # [0.4.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.3.0...dotfiles-v0.4.0) (2026-11-03)
 
 
