@@ -19,7 +19,7 @@ Classes:
 
     python3 audit.py [--json] [--save FILE] [--html FILE] [--all] [--home DIR] [--apps-dir DIR ...] [--max-seconds N]
 """
-import argparse, datetime, json, os, sys, tempfile, time
+import argparse, datetime, json, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accepted, adapters, checker, common, identity, knowledge
@@ -28,6 +28,7 @@ from refs import Refs
 
 SYSTEM_PREFIXES = ('/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/libexec', '/System', '/Library/Apple', '/var/run/com.apple',
                    '/Library/Developer/CommandLineTools')
+OS_MANAGED = re.compile(r'^/(private/)?var/run/com\.apple[./]')   # folders macOS itself puts on PATH (cryptex mounts); not the user's
 EPHEMERAL = ('/var/folders/', '/private/var/folders/', '/tmp/', '/private/tmp/')
 SECRET_SENTINEL_NOTE = 'file contents are never read or printed'
 
@@ -378,7 +379,7 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
                 if p.get('path') in szs:
                     p['kb'] = szs[p['path']]
     items = bins + scan_apps_and_signals(ctx, results, deadline, want_sizes) + scan_dots(ctx, results, refs, idx, uncertain, deadline, want_sizes, active_days)
-    for d in (d for d in dead_path if not any(under(d, sp) for sp in SYSTEM_PREFIXES)):   # PATH entries that point nowhere (OS-managed ones are not the user's): personal config, never a cleanup candidate
+    for d in (d for d in dead_path if not any(under(d, sp) for sp in SYSTEM_PREFIXES) and not OS_MANAGED.match(d)):   # PATH entries that point nowhere (OS-managed ones are not the user's): personal config, never a cleanup candidate
         why = 'is not a folder' if os.path.lexists(d) else 'does not exist'
         items.append(item('path-dead', d, d, 'none', 'config', [f'on PATH, but it {why}']))
     for i in items:          # a missing toolchain notes the folder that is waiting for it
@@ -628,8 +629,10 @@ def main():
         sys.exit(f'--check takes a plain name (letters, digits, space, dot, hyphen, plus): {bad[0][:40]!r}')
     common.OFFLINE = a.offline
     private_map = False
-    if a.cmux and not a.html:      # the map names things on this machine: a private temporary file, not a shared location
-        a.html, private_map = os.path.join(tempfile.mkdtemp(prefix='dotfiles-map-'), 'map.html'), True
+    if a.cmux and not a.html:      # the map names things on this machine: one fixed private file, so the next run reloads the same tab
+        state_dir = os.path.dirname(accepted.state_path())
+        os.makedirs(state_dir, mode=0o700, exist_ok=True)
+        a.html, private_map = os.path.join(state_dir, 'map.html'), True
     state_file = a.state or accepted.state_path()
     records, warn = accepted.load(state_file)
     home = os.path.abspath(a.home)
@@ -649,6 +652,8 @@ def main():
         import htmlmap
         with (os.fdopen(os.open(a.html, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') if private_map else open(a.html, 'w')) as f:
             f.write(htmlmap.render(rep))
+        if private_map:
+            os.chmod(a.html, 0o600)      # a file that already existed keeps its old mode otherwise
         print(f'wrote the map to {a.html}', file=sys.stderr)
         if a.cmux:
             import cmuxview

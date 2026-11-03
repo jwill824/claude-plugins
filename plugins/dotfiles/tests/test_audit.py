@@ -477,7 +477,9 @@ check('with nothing missing, the report says none were reported, by the sources 
       repd['missing_checks'] == [{'source': s_, 'status': 'checked'} for s_ in ('mise', 'brew', 'rustup')] and not [i for i in repd['items'] if i['cls'] == 'missing']
       and 'None reported by mise, brew, rustup.' in mdd, repd['missing_checks'])
 DEAD = os.path.join(ROOT, 'no-such-bin')
-rc, repm, rawm = audit_json(FAKE_MISSING='1', FAKE_NODEFAULT='1', PATH=f'{PBIN}:{FAKEBIN}:{DEAD}:/var/run/com.apple/fake/bin:/usr/bin:/bin')
+OS_DEAD = ['/var/run/com.apple/fake/bin', '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin', '/private/var/run/com.apple.x/bin']
+NOT_OS = ['/var/run/com.applesauce/bin', '/var/run/other/bin']
+rc, repm, rawm = audit_json(FAKE_MISSING='1', FAKE_NODEFAULT='1', PATH=':'.join([PBIN, FAKEBIN, DEAD] + OS_DEAD + NOT_OS + ['/usr/bin', '/bin']))
 ms = {i['name']: i for i in repm['items'] if i['cls'] == 'missing'}
 check('a toolchain mise lists as missing is reported with the manager\'s own line',
       'terraform@1.9.0' in ms and ms['terraform@1.9.0']['owner'] == 'mise' and 'ls --missing' in ms['terraform@1.9.0']['evidence'][0] and '1.9.0 (missing)' in ms['terraform@1.9.0']['evidence'][0], ms)
@@ -488,7 +490,8 @@ check('the folder waiting for a missing toolchain is not an orphan candidate: th
       by_name(repm, 'dotitem', '.terraform.d')['cls'] == 'referenced' and 'declares' in by_name(repm, 'dotitem', '.terraform.d')['evidence'][0], by_name(repm, 'dotitem', '.terraform.d'))
 check('and the missing item notes that its folder is present', any('.terraform.d' in e_ and 'present' in e_ for e_ in ms['terraform@1.9.0']['evidence']), ms['terraform@1.9.0'])
 dead = [i for i in repm['items'] if i['kind'] == 'path-dead']
-check('a PATH entry that does not exist is listed as config, and an OS-managed one is not', [i['path'] for i in dead] == [DEAD] and dead[0]['cls'] == 'config', dead)
+check('a PATH entry that does not exist is listed as config; entries macOS itself puts there (including the dotted cryptex mounts) are not, and look-alikes still are',
+      [i['path'] for i in dead] == [DEAD] + NOT_OS and all(i['cls'] == 'config' for i in dead), [i['path'] for i in dead])
 afile = os.path.join(ROOT, 'a-file-on-path')
 write(afile, 'x')
 rc, repf2, _ = audit_json(PATH=f'{FAKEBIN}:{afile}:/usr/bin:/bin')
@@ -980,6 +983,20 @@ tmp_map = (_re.search(r'wrote the map to (\S+)', err) or [None, ''])[1]
 check('--cmux without --html writes the map to a private temporary file and opens that one',
       tmp_map and os.path.isfile(tmp_map) and oct(os.stat(tmp_map).st_mode & 0o777) == '0o600' and oct(os.stat(os.path.dirname(tmp_map)).st_mode & 0o777) == '0o700'
       and open(tmp_map).read().startswith('<!doctype html>') and calls == ['tree --all --json', f'open {tmp_map} --no-focus'], (tmp_map, calls))
+check('--cmux without --html uses one fixed private file in the state folder, not a new temporary file', tmp_map == os.path.join(STATE, 'map.html'), tmp_map)
+tab_url = pathlib.Path(tmp_map).as_uri()
+first_mtime = os.stat(tmp_map).st_mtime_ns
+rc, out, err, calls2 = cmux_run(tree_json([('surface:4', 'browser', 'Dotfiles map', tab_url)]), extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('a second run writes the same file and reloads the tab that shows it: no new tab', calls2 == ['tree --all --json', 'browser surface:4 reload'] and 'reloaded the map in cmux (surface:4)' in err
+      and os.stat(tmp_map).st_mtime_ns >= first_mtime, (calls2, err))
+os.chmod(tmp_map, 0o644)
+rc, out, err, calls3 = cmux_run(tree_json([]), extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1')
+check('a map file that already existed with looser permissions is made private again', oct(os.stat(tmp_map).st_mode & 0o777) == '0o600', oct(os.stat(tmp_map).st_mode))
+FRESH = os.path.join(ROOT, 'fresh-state')
+rc, out, err, calls4 = cmux_run(tree_json([]), extra_args=['--cmux'], CMUX_WORKSPACE_ID='W1', DOTFILES_STATE=FRESH)
+check('on a machine with no state folder yet, --cmux creates it private (0700) and puts the map inside (0600)',
+      os.path.isdir(FRESH) and oct(os.stat(FRESH).st_mode & 0o777) == '0o700' and oct(os.stat(os.path.join(FRESH, 'map.html')).st_mode & 0o777) == '0o600', (os.path.isdir(FRESH), err))
+check('the audit no longer creates temporary map folders at all', 'tempfile' not in open(os.path.join(SCRIPTS, 'audit.py')).read(), '')
 ok_forms = [_re.compile(r'^tree --all --json$'), _re.compile(r'^open /.+\.html --no-focus$'), _re.compile(r'^browser surface:\d+ reload$')]
 check('every cmux call made in these tests is one of the three allowed forms', all(any(f.match(c) for f in ok_forms) for c in calls), calls)
 real_isfile = os.path.isfile
