@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/jwill824/claude-plugins/compare/disk-reclaim-v1.0.1...disk-reclaim-v1.0.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **disk-reclaim:** hold folders containing SSH private keys ([#8](https://github.com/jwill824/claude-plugins/issues/8)) ([ce88069](https://github.com/jwill824/claude-plugins/commit/ce8806974824d677bf5b6d6dc5c101ddf407b280))
+
 ## [1.0.1](https://github.com/jwill824/claude-plugins/compare/disk-reclaim-v1.0.0...disk-reclaim-v1.0.1) (2026-11-03)
 
 

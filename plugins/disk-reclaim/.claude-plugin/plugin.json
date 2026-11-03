@@ -1,7 +1,7 @@
 {
   "name": "disk-reclaim",
   "displayName": "Disk Reclaim",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Find where disk space is going and reclaim it safely. Scans a project folder or a whole Mac (tool caches, Xcode simulators, Docker volumes), tiers each item as safe, needs-review or keep, and re-checks every gate right before anything is removed.",
   "author": {
     "name": "Jeff Williams"
