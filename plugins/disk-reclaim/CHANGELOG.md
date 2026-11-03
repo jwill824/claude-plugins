@@ -1,5 +1,12 @@
 # Changelog
 
+# [1.1.0](https://github.com/jwill824/claude-plugins/compare/disk-reclaim-v1.0.2...disk-reclaim-v1.1.0) (2026-11-03)
+
+
+### Features
+
+* **disk-reclaim:** session-start disk hook that speaks when space is low ([#9](https://github.com/jwill824/claude-plugins/issues/9)) ([6b6099d](https://github.com/jwill824/claude-plugins/commit/6b6099dcbb95bea192eff5a7f79656955f3e4547))
+
 ## [1.0.2](https://github.com/jwill824/claude-plugins/compare/disk-reclaim-v1.0.1...disk-reclaim-v1.0.2) (2026-11-03)
 
 
