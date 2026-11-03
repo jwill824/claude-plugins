@@ -6,6 +6,7 @@ is a local file: it says so at the top, and nothing in it is fetched or sent any
 """
 import html
 
+import identity
 from common import age_text
 
 GLYPH = {'managed': '●', 'owned': '●', 'unmanaged': '◇', 'orphaned': '▲', 'referenced': '◐', 'unknown': '?', 'unattributed': '·', 'config': '–', 'system': '–', 'more': '…'}
@@ -78,6 +79,7 @@ def leaves(rep):
     """Everything with a size, as {group, name, kb, cls, tip}."""
     out = []
     prunable = {i['name'] for i in rep['items'] if i['kind'] == 'mise-prunable'}
+    dup = {d['tool']: sorted({c['owner'] for c in d['copies']}) for d in rep.get('duplicates', [])}
     for owner, pk in rep['inventory'].items():
         for p in pk:
             if p['kind'] in ('formula', 'tool', 'package', 'toolchain') and p.get('kb'):
@@ -87,6 +89,9 @@ def leaves(rep):
                     cls, extra = 'orphaned', "\nmise says this version is prunable (see the list below)"
                 if p['kind'] == 'formula':
                     extra += '\nrequested by you' if p.get('requested') else '\ninstalled as a dependency'
+                also = [o for o in dup.get(identity.canon(p['name']), []) if o != owner]
+                if also:
+                    extra += '\nduplicate: also installed by ' + ', '.join(also)
                 a = age_text(p.get('installed_at'), p.get('date_source'))
                 out.append({'group': FORMULA_GROUPS.get(owner, owner), 'name': name, 'kb': p['kb'], 'cls': cls,
                             'tip': f'{owner} {p["kind"]}{extra}' + (f'\nthis version installed {a}' if a else '')})
@@ -185,6 +190,26 @@ code{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding
 '''
 
 
+def dup_section(rep):
+    dups, vers = rep.get('duplicates', []), rep.get('versions', [])
+    h = f'<h2>Duplicate installs ({len(dups)})</h2>'
+    if rep.get('duplicates_incomplete'):
+        h += '<div class="warn"><b>May be incomplete:</b> ' + e(', '.join(rep['duplicates_incomplete'])) + ' could not be read.</div>'
+    if not dups:
+        return h + '<p class="note">None across managers.</p>'
+    rows_ = ''
+    for d in dups:
+        a = d['active']
+        act = e((a['owner'] + ' ' + a['version']).strip()) if a else 'none found on PATH'
+        rows_ += (f"<tr><td>{e(d['tool'])}</td><td>{act}</td><td>{e(', '.join((c['owner'] + ' ' + c['version']).strip() for c in d['copies']))}</td>"
+                  f"<td>{e('; '.join(d['notes']))}</td></tr>")
+    h += ("<p class=\"note\">The same tool through more than one manager. Active is the first match on the audit's PATH, which may differ from your shell's.</p>"
+          f'<table><thead><tr><th>Tool</th><th>Active</th><th>Copies</th><th>Notes</th></tr></thead><tbody>{rows_}</tbody></table>')
+    if vers:
+        h += '<p class="note">Several versions under one manager: ' + e('; '.join(f"{v['tool']}: {v['owner']} {', '.join(v['versions'])}" for v in vers)) + '</p>'
+    return h
+
+
 def render(rep):
     home, items = rep['home'], rep['items']
     cls = lambda c, *kinds: [i for i in items if i['cls'] == c and (not kinds or i['kind'] in kinds)]
@@ -209,6 +234,7 @@ def render(rep):
             f'<div class="tm" role="img" aria-label="Treemap of installed things by owner and size">{treemap(lv)}</div>'
             f'<div class="legend">{legend}</div>'
             '<p class="note">Block size is disk usage. Only things with a measured size are drawn; commands from managers are inside their package.</p>'
+            + dup_section(rep) +
             f'<h2>Sources</h2><table><thead><tr><th>Source</th><th>Status</th><th>Packages</th><th>Note</th></tr></thead><tbody>{src}</tbody></table>'
             f'<p class="note">Not read by this version: {e(", ".join(rep["not_covered"]))}. Anything that resolves into their folders is shown as unknown.</p>'
             f'<h2>Orphan candidates ({len(orph)})</h2><p class="note">Candidates, not verdicts. Click a row for the evidence and the key that /dotfiles:tidy takes.</p>'

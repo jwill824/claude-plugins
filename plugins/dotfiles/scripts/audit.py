@@ -22,7 +22,7 @@ Classes:
 import argparse, datetime, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import adapters, knowledge
+import adapters, identity, knowledge
 from common import human, sizes, tilde, birth, age_text
 from refs import Refs
 
@@ -296,6 +296,63 @@ def scan_apps_and_signals(ctx, results, deadline, want_sizes):
 
 
 SIZED_KINDS = ('formula', 'tool', 'package', 'toolchain')
+COPY_KINDS = ('formula', 'tool', 'crate', 'package')     # installs that can be the same tool as another manager's
+
+
+def _is_system(path):
+    return any(under(os.path.realpath(path), s) for s in SYSTEM_PREFIXES)
+
+
+def find_duplicates(ctx, results, bins):
+    """Tools installed through more than one manager, and tools with several versions under one manager.
+
+    A finding needs two distinct managers. Several versions under one manager are only a "versions" line, a system copy is
+    only a note, and a mise shim is not a copy at all (it is mise's own pointer). "Active" is the first match on the
+    audit's PATH, which may differ from the user's shell.
+    """
+    groups = {}
+    for res in results.values():
+        for p in res['packages']:
+            if p['kind'] in COPY_KINDS and p.get('name') and not p.get('bundled'):
+                groups.setdefault(identity.canon(p['name']), []).append(
+                    {'owner': p['owner'], 'name': p['name'], 'version': p.get('version') or '', 'path': p.get('path') or None, 'via': p.get('node'),
+                     'requested': p.get('requested'), 'installed_at': p.get('installed_at'), 'date_source': p.get('date_source')})
+    shims = results.get('mise', {}).get('extra', {}).get('shims')
+    by_path = {i['path']: i for i in bins if i.get('path')}
+    dups, versions = [], []
+    for tool, copies in sorted(groups.items()):
+        owners = {c['owner'] for c in copies}
+        vers = {c['version'] for c in copies}
+        if len(owners) < 2 and len(vers) < 2:
+            continue
+        active, system = None, []
+        for d in ctx.path_dirs:
+            for cmd in identity.commands(tool):
+                p = os.path.join(d, cmd)
+                if not (os.path.isfile(p) and os.access(p, os.X_OK)):
+                    continue
+                real = os.path.realpath(p)
+                if _is_system(d):
+                    system.append(p)
+                    hit = {'owner': 'system', 'version': '', 'path': p, 'how': 'a system copy'} if active is None else None
+                elif shims and os.path.dirname(p) == shims:
+                    hit = {'owner': 'mise', 'version': '', 'path': p, 'how': "mise's shim: mise picks the version from its config"} if active is None else None
+                else:
+                    c = max((c for c in copies if c['path'] and under(real, c['path'])), key=lambda c: len(c['path']), default=None)
+                    owner = c['owner'] if c else (by_path.get(p) or {}).get('owner', 'unknown')
+                    hit = {'owner': owner, 'version': c['version'] if c else '', 'path': p, 'how': 'first on the audit\'s PATH'} if active is None else None
+                active = active or hit
+        notes = []
+        for s in system:
+            notes.append(f"shadowed system copy: {tilde(s, ctx.home)}" if active and active['owner'] != 'system'
+                         else f"system copy {tilde(s, ctx.home)} is first on PATH, so the managed copies are shadowed")
+        copies.sort(key=lambda c: (c['owner'], c['version']))
+        entry = {'tool': tool, 'active': active, 'copies': copies, 'notes': notes}
+        if len(owners) >= 2:
+            dups.append(entry)
+        else:
+            versions.append({'tool': tool, 'owner': next(iter(owners)), 'versions': sorted(vers), 'notes': notes})
+    return dups, versions
 
 
 def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False):
@@ -327,7 +384,9 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
     for res in results.values():
         for p in res['packages']:
             inventory.setdefault(p['owner'], []).append({k: v for k, v in p.items() if k in ('kind', 'name', 'version', 'requested', 'bundled', 'node', 'bundle_id', 'how', 'path', 'kb', 'installed_at', 'date_source')})
+    dups, versions = find_duplicates(ctx, results, bins)
     return {
+        'duplicates': dups, 'versions': versions, 'duplicates_incomplete': [n for n, r in results.items() if r['status'] == 'failed'],
         'generated': datetime.datetime.now().isoformat(timespec='seconds'), 'home': home, 'seconds': round(time.time() - t0, 1),
         'adapters': [{'name': n, 'status': r['status'], 'detail': r['detail'], 'packages': len(r['packages'])} for n, r in results.items()],
         'not_covered': sorted(adapters.NOT_COVERED), 'uncertain': uncertain, 'ephemeral_path_dirs': ephemeral,
@@ -418,6 +477,23 @@ def render(rep, show_all=False):
         L += ['', f"## Unattributed dot-items ({len(una)})", '', f"Not in the knowledge table ({rep['knowledge_entries']} entries). Largest 15:", '', '| Item | Size | Mentioned by |', '|---|---:|---|']
         for i in una[:15]:
             L.append(f"| `{i['name']}` | {human(i['kb']) if i['kb'] else ''} | {', '.join(i['referenced_by']) or ''} |")
+    dups, vers = rep.get('duplicates', []), rep.get('versions', [])
+    if dups or vers or rep.get('duplicates_incomplete'):
+        L += ['', f'## Duplicate installs ({len(dups)})', '']
+        if rep.get('duplicates_incomplete'):
+            L += [f"**May be incomplete:** {', '.join(rep['duplicates_incomplete'])} could not be read, so a duplicate through it would not show here.", '']
+        if dups:
+            L += ["The same tool through more than one manager. **Active** is the first match on the audit's PATH, which may differ from your shell's (the audit does not read your shell startup files).", '',
+                  '| Tool | Active | Copies | Notes |', '|---|---|---|---|']
+            for d in dups:
+                a = d['active']
+                act = f"{a['owner']} {a['version']}".strip() + (f" ({a['how']})" if a['how'].startswith('mise') else '') if a else 'none found on PATH'
+                L.append(f"| `{d['tool']}` | {act} | {', '.join((c['owner'] + ' ' + c['version']).strip() for c in d['copies'])} | {'; '.join(d['notes'])} |")
+        else:
+            L.append('None across managers.')
+        if vers:
+            L += ['', 'Several versions under one manager (normal for a version manager, only worth a look if you meant to keep one):']
+            L += [f"- `{v['tool']}`: {v['owner']} {', '.join(v['versions'])}" + (f" ({'; '.join(v['notes'])})" if v['notes'] else '') for v in vers]
     L += ['', '## Inventory by manager', '']
     for owner, pk in sorted(rep['inventory'].items()):
         kinds = {}

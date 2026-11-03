@@ -61,7 +61,8 @@ def build_world():
     brew_info = {'formulae': [
         {'name': 'foo', 'installed': [{'version': '1.0', 'installed_on_request': True, 'time': NOW - 400 * DAY}]},
         {'name': 'cocoapods', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
-        {'name': 'oldlib', 'installed': [{'version': '0.1', 'installed_on_request': False}]}],
+        {'name': 'oldlib', 'installed': [{'version': '0.1', 'installed_on_request': False}]},
+        {'name': 'node', 'installed': [{'version': '26.0.0', 'installed_on_request': True}]}],
         'casks': [{'token': 'cask-app', 'installed': '2.0', 'installed_time': NOW - 45 * DAY, 'artifacts': [{'app': ['Cask.app']}]},
                   # a pkg cask: no app artifact, and the app's bundle id is in pkgutil, not quit (as with Microsoft Teams)
                   {'token': 'teams-like', 'installed': '1.0', 'artifacts': [{'pkg': ['x.pkg']}, {'uninstall': [{'quit': ['com.example.updater'], 'pkgutil': ['com.example.teams', 'com.example.*']}]}]},
@@ -103,6 +104,8 @@ esac''')
     os.makedirs(os.path.join(prefix, 'bin'))
     os.symlink('../Cellar/foo/1.0/bin/foo', os.path.join(prefix, 'bin/foo'))
     write(os.path.join(prefix, 'bin/brew'), '', 0o755)
+    write(os.path.join(prefix, 'Cellar/node/26.0.0/bin/node'), '', 0o755)           # the same tool as mise's node 22: a duplicate
+    os.symlink('../Cellar/node/26.0.0/bin/node', os.path.join(prefix, 'bin/node'))
     # uv-owned command, an unmanaged one, a fragile link, a broken link
     write(os.path.join(HOME, '.local/share/uv/tools/uvtool/bin/uvtool'), '', 0o755)
     lb = os.path.join(HOME, '.local/bin')
@@ -317,6 +320,62 @@ rects = htmlmap.squarify([s for s, _ in sizes_in], 0, 0, 100, 100)
 area = [w * h for (_x, _y, w, h) in rects]
 check('treemap rects fill the box and stay inside it', abs(sum(area) - 10000) < 1e-6 and all(x >= -1e-9 and y >= -1e-9 and x + w <= 100 + 1e-9 and y + h <= 100 + 1e-9 for (x, y, w, h) in rects), rects)
 check('treemap areas are proportional to sizes', all(abs(a / 10000 - s / 23) < 1e-9 for a, (s, _) in zip(area, sizes_in)), area)
+
+# ---- duplicates: the same tool through two managers is a finding; a system copy is a note; versions under one manager are a line
+import audit  # noqa: E402
+import identity  # noqa: E402
+
+check('canon folds the known spellings of a tool and leaves everything else alone',
+      [identity.canon(n) for n in ('python@3.14', 'python3.13', 'Python', 'nodejs', 'node@22', 'openjdk@21', 'jq', 'npm:prettier', 'python-tk@3.14', '@types/node')]
+      == ['python', 'python', 'python', 'node', 'node', 'java', 'jq', 'npm:prettier', 'python-tk', '@types/node'],
+      [identity.canon(n) for n in ('python@3.14', 'python3.13', 'Python', 'nodejs', 'node@22', 'openjdk@21', 'jq', 'npm:prettier', 'python-tk@3.14', '@types/node')])
+PBIN = os.path.join(HOME, 'brewprefix', 'bin')
+rc, repd, rawd = audit_json(PATH=f'{PBIN}:{FAKEBIN}:/usr/bin:/bin')
+dn = {d['tool']: d for d in repd['duplicates']}
+check('a tool installed by brew and by mise is a duplicate finding, with both copies', set(dn) == {'node'} and {c['owner'] for c in dn['node']['copies']} == {'brew', 'mise'}, repd['duplicates'])
+check('the active copy is the first on PATH, and it is the brew one here', dn['node']['active']['owner'] == 'brew' and dn['node']['active']['version'] == '26.0.0', dn['node']['active'])
+check('a tool under one manager only (jq in mise) is not a duplicate', 'jq' not in dn and not any(v['tool'] == 'node' for v in repd['versions']), repd['versions'])
+rc, mdd, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', PATH=f'{PBIN}:{FAKEBIN}:/usr/bin:/bin')
+check('the report has a duplicates section that says active is the audit\'s PATH', '## Duplicate installs (1)' in mdd and "audit's PATH" in mdd and '| `node` |' in mdd, mdd[-1500:])
+
+sysd = os.path.join(ROOT, 'sysbin')
+mbin = os.path.join(ROOT, 'mbin')
+shimd = os.path.join(ROOT, 'shims')
+write(os.path.join(sysd, 'python3'), '', 0o755)
+write(os.path.join(sysd, 'java'), '', 0o755)
+write(os.path.join(mbin, 'python3'), '', 0o755)
+write(os.path.join(shimd, 'node'), '', 0o755)
+mk = lambda owner, kind, name, ver, path=None: {'owner': owner, 'kind': kind, 'name': name, 'version': ver, 'path': path}
+fres = {'brew': {'status': 'ok', 'packages': [mk('brew', 'formula', 'python@3.13', '3.13.1'), mk('brew', 'formula', 'python@3.14', '3.14.1'), mk('brew', 'formula', 'nodejs', '26.0'), mk('brew', 'formula', 'corepack', '0.1')], 'extra': {}},
+        'mise': {'status': 'ok', 'packages': [mk('mise', 'tool', 'python', '3.14.8', mbin), mk('mise', 'tool', 'java', '17'), mk('mise', 'tool', 'java', '21'),
+                                              mk('mise', 'tool', 'node', '18'), mk('mise', 'tool', 'node', '22')], 'extra': {'shims': shimd}},
+        'npm': {'status': 'ok', 'packages': [mk('npm', 'package', 'leftpad', '1.0'), mk('npm', 'package', 'leftpad', '1.0'), {**mk('npm', 'package', 'corepack', '0.2'), 'bundled': True}], 'extra': {}}}
+real_prefixes = audit.SYSTEM_PREFIXES
+audit.SYSTEM_PREFIXES = (os.path.realpath(sysd),)
+try:
+    fctx = audit.Ctx(HOME, [shimd, sysd, mbin], [])
+    fd, fv = audit.find_duplicates(fctx, fres, [])
+    fdn = {d['tool']: d for d in fd}
+    check('python@3.13, python@3.14 and mise python are one tool, found through two managers', set(fdn) == {'python', 'node'} and [c['owner'] for c in fdn['python']['copies']] == ['brew', 'brew', 'mise'], fd)
+    check('a system copy next to managed ones is a note on the finding, never a copy of its own',
+          any('system copy' in n for n in fdn['python']['notes']), fdn['python']['notes'])
+    check('no copy in the finding is the system one', all(c['owner'] != 'system' for d in fd for c in d['copies']), fd)
+    check('a system copy first on PATH is reported as the active one, not as shadowed',
+          fdn['python']['active']['owner'] == 'system' and any('first on PATH' in n for n in fdn['python']['notes']), (fdn['python']['active'], fdn['python']['notes']))
+    check('a mise shim is the active node (a pointer, not a copy), and nodejs normalises to node', fdn['node']['active']['owner'] == 'mise' and 'shim' in fdn['node']['active']['how'], fdn['node']['active'])
+    check('versions under one manager are a versions line, not a finding, and carry the system note',
+          [(v['tool'], v['owner'], v['versions']) for v in fv] == [('java', 'mise', ['17', '21'])] and fv[0]['notes'], fv)
+    check('the same npm package at the same version under several node installs is not reported, and bundled packages are skipped', 'leftpad' not in fdn and all(v['tool'] != 'leftpad' for v in fv) and 'corepack' not in fdn, (fd, fv))
+    fctx2 = audit.Ctx(HOME, [mbin, sysd, shimd], [])
+    fd2, _ = audit.find_duplicates(fctx2, fres, [])
+    check('PATH order decides which copy is active and which system copy is shadowed',
+          {d['tool']: d for d in fd2}['python']['active']['owner'] == 'mise' and any('shadowed system copy' in n for n in {d['tool']: d for d in fd2}['python']['notes']), fd2)
+finally:
+    audit.SYSTEM_PREFIXES = real_prefixes
+rc, repf, _ = audit_json(FAKE_UV_FAIL='1')
+check('a failed adapter marks the duplicate list as possibly incomplete', repf['duplicates_incomplete'] == ['uv'], repf['duplicates_incomplete'])
+check('the map has a duplicates section', '<h2>Duplicate installs (1)' in htmlmap.render(repd), '')
+check('a duplicate\'s tool, owner and notes are escaped in the map', htmlmap.dup_section({'duplicates': [{'tool': EVIL, 'active': None, 'copies': [{'owner': EVIL, 'version': ''}], 'notes': [EVIL]}], 'versions': []}).count('<img') == 0, '')
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
