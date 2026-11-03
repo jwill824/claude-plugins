@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/scan_system.py\" --status --hook || true",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/scan_system.py\" --status --hook --quiet-if-ok || true",
             "timeout": 10,
             "statusMessage": "Checking disk space..."
           }

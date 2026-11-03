@@ -84,17 +84,20 @@ def record_history(total, free):
     return rows
 
 
-def hook_output(free, pct, low, trend, run, problems, source):
+def hook_output(free, pct, low, why, trend, run, problems, source):
     """The SessionStart hook payload: a one-line summary the user sees (no model cost), plus context for the model only when
     something needs attention, telling it to offer choices and never to delete on its own."""
-    parts = [f'Disk: {human(free)} free ({pct:.0f}%)' + (' LOW' if low else '')]
+    parts = [f'Disk: {human(free)} free ({pct:.0f}%)']
+    if low:
+        parts.append(why)
     if trend:
         parts.append(trend)
     if run:
         parts.append(f'last cleanup {ago(run["time"])}')
     out = {'systemMessage': ' · '.join(parts)}
     if problems:
-        ctx = (f'Session-start disk check (source: {source or "unknown"}): ' + '; '.join(problems) + '.\n'
+        ctx = (f'Session-start disk check (source: {source or "unknown"}): {human(free)} free ({pct:.0f}%), {why}'
+               + ''.join('; ' + p for p in problems[1:]) + '.\n'
                'Before starting other work, briefly tell the user and use AskUserQuestion to offer options, e.g.:\n'
                '- see where the space went: /disk-reclaim:system (read-only scan)\n'
                '- walk the items that need a decision: /disk-reclaim:review\n'
@@ -117,6 +120,8 @@ def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=
     problems, lines = [], []
     pct = 100 * free / total if total else 0
     low = free < warn_free_gb * 1048576 or pct < warn_free_pct
+    why = ' and '.join(([f'under {warn_free_gb:g} GB free'] if free < warn_free_gb * 1048576 else []) +
+                       ([f'under {warn_free_pct:g}% free'] if pct < warn_free_pct else []))
     if low:
         problems.append(f'only {human(free)} free ({pct:.0f}%)')
     lines.append(f'Disk: {human(free)} free of {human(total)} ({pct:.0f}% free)' + ('  LOW' if low else ''))
@@ -154,7 +159,7 @@ def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=
                  if run else 'Last cleanup: none recorded')
     if hook:  # always exit 0: a hook must never fail the session
         if not (quiet_if_ok and not problems):
-            print(json.dumps(hook_output(free, pct, low, trend, run, problems, source)))
+            print(json.dumps(hook_output(free, pct, low, why, trend, run, problems, source)))
         return 0
     if not (quiet_if_ok and not problems):
         print('\n'.join(lines))
