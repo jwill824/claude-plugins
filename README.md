@@ -31,6 +31,23 @@ Five commands, one per job. Ask in plain words ("why is my disk full", "why is t
 
 Upgrading from 0.1.x: the single `/disk-reclaim:disk-reclaim` skill is gone, replaced by the five above. Your keep rulings and history carry over, since the state folder is unchanged.
 
+### Quick start
+
+1. **Check where you stand:** `/disk-reclaim:status`.
+2. **See where the space went:** `/disk-reclaim:system` (read-only, about a minute). For one project, `/disk-reclaim:scan path/to/project`.
+3. **Remove the safe items:** `/disk-reclaim:run`. Read the dry run first; nothing is removed until you approve. Items used recently are opt-in with `--bucket SAFE-USED`.
+4. **Decide the rest:** `/disk-reclaim:review`. For each group choose Remove, Keep or Inspect first, then approve the dry run. Keeps are remembered for 90 days.
+5. **Finish up:** empty the Trash, because moved folders only free space then. If Docker volumes were removed, run `colima ssh -- sudo fstrim -av` last.
+
+What an approved removal does:
+
+| Item | Action | Reversible? |
+|---|---|---|
+| App cache folders, `~/.npm/_npx`, Android emulators | Moved to the Trash | Yes, until you empty it |
+| iOS simulators | `xcrun simctl delete` | No |
+| Docker volumes | `docker volume rm`, no `-f` | No |
+| Simulator runtimes, Xcode archives, `~/.claude` data, `~/.m2` | Refused: do these by hand | n/a |
+
 ### How it stays safe
 
 - **Three tiers.** SAFE (regenerable, nothing lost but rebuild time), VERIFY (a person decides), KEEP (never proposed). Old data is never promoted: a volume nobody touched in 90 days can still be the only copy of a database.
