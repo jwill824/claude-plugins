@@ -1,7 +1,7 @@
 ---
 name: audit
 description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break, and can write an HTML map of it. Read-only, except that the checker may let Homebrew refresh its own name index (`--offline` forbids it). Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
-argument-hint: "[--html FILE] [--all] [--json] [--offline] [--check NAME]"
+argument-hint: "[--html FILE] [--cmux] [--all] [--json] [--offline] [--check NAME]"
 ---
 
 # audit
@@ -20,6 +20,8 @@ It takes under a minute (most of it is sizing folders). `--all` lists every Home
 `--offline` stops Homebrew from refreshing its own name index while the checker searches it. Without it, `brew search` follows Homebrew's own staleness rule (about once a day), which may use the network and rewrites Homebrew's cache, and nothing else; the report's "Adoption candidates" section says whether the index was *refreshed* or *cached*. Tell the user when it was refreshed. `--check NAME` (repeatable) also looks for a manager that offers a name the user types.
 
 The map is interactive but entirely offline: one file, one inline script pinned by hash under a policy (`default-src 'none'`) that blocks every network request, with no data embedded as JSON. In it you can open a group to see every item, click a block for its evidence, filter and search, sort the Homebrew and mise tables, and tick items to copy a `/dotfiles:accept` or `/dotfiles:tidy` command with their keys one per line. Copying changes nothing: the user pastes it, and the skill still confirms.
+
+`--cmux` (implies `--html`; with no `--html FILE` the map goes to a private temporary file) opens the map in a cmux browser split beside the terminal, without taking focus, or reloads the tab that already shows that same file. It exists only for people running Claude Code inside cmux and is opt-in: when `CMUX_WORKSPACE_ID` is set you may *offer* it, but never add it unasked, because it changes the user's window layout. It runs only `cmux tree --all --json`, `cmux open FILE --no-focus` and `cmux browser surface:N reload`; a tab is recognised by its exact URL in the current workspace, never by its title; and when cmux cannot be read it does nothing and says so. The map has no channel back to cmux, so choosing items in it still ends with the user pasting a typed command.
 
 Open the map locally. It names folders, apps and commands on this machine, so publish it as an Artifact only if the user asks.
 
