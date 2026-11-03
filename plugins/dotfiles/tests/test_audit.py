@@ -69,7 +69,19 @@ def build_world():
                   # a cask that shares a name with an app but installs something else (a CLI)
                   {'token': 'lookalike', 'installed': '1.0', 'artifacts': [{'binary': ['lookalike']}]}]}
     write(os.path.join(ROOT, 'brew-info.json'), json.dumps(brew_info))
-    fake('brew', f'''case "$1" in
+    write(os.path.join(ROOT, 'known-casks'), 'manual\nlookalike\ncask-app\n')
+    write(os.path.join(ROOT, 'known-formulae'), 'manual-tool\nfoo\n')
+    write(os.path.join(HOME, 'Library/Caches/Homebrew/api/cask_names.txt'), 'x', age_days=3)
+    write(os.path.join(HOME, 'Library/Caches/Homebrew/api/formula_names.txt'), 'x', age_days=3)
+    fake('brew', f'''echo "$1 ${{HOMEBREW_NO_AUTO_UPDATE:-unset}}" >> "{ROOT}/brew-env.log"
+case "$1" in
+  search) [ -n "$FAKE_SEARCH_FAIL" ] && {{ echo "Error: network down" >&2; exit 3; }}
+          [ -z "$HOMEBREW_NO_AUTO_UPDATE" ] && [ -n "$FAKE_REFRESH" ] && touch "{HOME}/Library/Caches/Homebrew/api/cask_names.txt"
+          known="{ROOT}/known-casks"; [ "$2" = "--formula" ] && known="{ROOT}/known-formulae"
+          asked=$(echo "$3" | cut -c4- | rev | cut -c4- | rev | tr '|' '\n')
+          hits=$(echo "$asked" | grep -x -F -f "$known")
+          [ -z "$hits" ] && {{ echo 'Error: No formulae or casks found for "'"$3"'".' >&2; exit 1; }}
+          echo "$hits";;
   --prefix) echo "{prefix}";;
   info) cat "{ROOT}/brew-info.json";;
   autoremove) echo "==> Would autoremove 1 unneeded formulae:"; echo "oldlib";;
@@ -87,6 +99,8 @@ esac''')
     write(os.path.join(ROOT, 'mise-ls.json'), json.dumps(mise_ls))
     fake('mise', f'''case "$1 $2" in
   "ls --json") cat "{ROOT}/mise-ls.json";;
+  "registry ") [ -n "$FAKE_REGISTRY_FAIL" ] && {{ echo "mise: boom" >&2; exit 1; }}
+               echo "mystery                       aqua:example/mystery asdf:example/asdf-mystery"; echo "node                          core:node";;
   "ls --prunable") echo "jq  1.0.0";;
   "ls --missing") [ -n "$FAKE_MISE_MISSING_FAIL" ] && {{ echo "mise: boom" >&2; exit 1; }}
                   [ -n "$FAKE_MISSING" ] && echo "terraform  1.9.0 (missing)  ~/.config/mise/config.toml  1.9"; exit 0;;
@@ -157,6 +171,7 @@ esac''')
 
 def env(**extra):
     e = dict(os.environ, PATH=f'{FAKEBIN}:/usr/bin:/bin', DOTFILES_TEST_LOG=LOG, HOME=HOME)
+    e.pop('HOMEBREW_NO_AUTO_UPDATE', None)   # the test decides whether Homebrew may refresh, not the developer's shell
     e.update(extra)
     return e
 
@@ -209,7 +224,7 @@ check('an app named like an installed cask, with a different bundle id, stays un
 check('a bundle id found only in a cask\'s quit list is not proof: unmanaged, with a suggestion that says so (as with Codex and the chatgpt cask)',
       g('app', 'Updater')['cls'] == 'unmanaged' and g('app', 'Updater')['tier'] is None
       and g('app', 'Updater')['suggestions'][0]['candidate'] == 'teams-like' and 'quit list' in g('app', 'Updater')['suggestions'][0]['evidence'], g('app', 'Updater'))
-check('an app with no match has no suggestions', g('app', 'Manual')['suggestions'] == [], g('app', 'Manual'))
+check('an app with no match has no suggestions', g('app', 'TeamsHelper')['suggestions'] == [] and g('app', 'TeamsHelper')['check'] == 'none', g('app', 'TeamsHelper'))
 
 # ---- install dates: only from a real record, and honest about where they came from
 pk = {(p['kind'], p['name']): p for p in rep['inventory']['brew']}
@@ -247,7 +262,8 @@ check('nothing in a keep entry is ever orphaned', not any(i['cls'] == 'orphaned'
 # ---- read-only, and no secrets anywhere
 logged = [l.strip() for l in open(LOG)] if os.path.exists(LOG) else []
 ok_cmds = {' '.join(a) for a in ALLOWED}
-check('every command the fake managers received is on the allow-list', logged and all(l in ok_cmds for l in logged), [l for l in logged if l not in ok_cmds])
+import common  # noqa: E402
+check('every command the fake managers received is on the allow-list', logged and all(l in ok_cmds or common.allowed(l.split()) for l in logged), [l for l in logged if l not in ok_cmds and not common.allowed(l.split())])
 verbs = {'install', 'uninstall', 'upgrade', 'update', 'remove', 'cleanup', 'delete', '--force', '--zap'}
 # whole words only: `--installed` and `cargo install --list` are read-only
 mutating = [l for l in logged if l != 'cargo install --list' and any(w in verbs for w in l.split())]
@@ -327,6 +343,7 @@ check('treemap areas are proportional to sizes', all(abs(a / 10000 - s / 23) < 1
 
 # ---- duplicates: the same tool through two managers is a finding; a system copy is a note; versions under one manager are a line
 import audit  # noqa: E402
+import checker  # noqa: E402
 import identity  # noqa: E402
 
 check('canon folds the known spellings of a tool and leaves everything else alone',
@@ -410,7 +427,6 @@ check('a failed check is never reported as none: it says could not check, and th
       and {a['name']: a['status'] for a in repx['adapters']}['brew'] == 'ok', repx['missing_checks'])
 rc, mdx, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', FAKE_MISE_MISSING_FAIL='1', FAKE_BREW_MISSING_FAIL='1')
 check('the report says "could not check" and does not say none were reported by them', 'Could not check mise, brew' in mdx and 'None reported by rustup' in mdx and 'None reported by mise' not in mdx, mdx[mdx.find('## Missing'):][:500])
-import common  # noqa: E402
 check('the two new commands are on the allow-list and nothing like them is', common.allowed(['brew', 'missing']) and common.allowed(['mise', 'ls', '--missing'])
       and not common.allowed(['brew', 'missing', '--force']) and not common.allowed(['mise', 'ls', '--missing', 'x']))
 os.environ.update(PATH=f'{FAKEBIN}:' + os.environ['PATH'], DOTFILES_TEST_LOG=LOG)
@@ -428,6 +444,67 @@ check('the map has the section', 'Missing toolchains and dead PATH entries (3 mi
 check('names in the missing section are escaped', '<img' not in htmlmap.missing_section({'home': HOME, 'missing_checks': [], 'items': [
       {'cls': 'missing', 'kind': 'missing-toolchain', 'name': EVIL, 'owner': EVIL, 'evidence': [EVIL], 'path': ''},
       {'cls': 'config', 'kind': 'path-dead', 'name': EVIL, 'owner': 'none', 'evidence': [EVIL], 'path': '/' + EVIL}]}), '')
+
+# ---- item checker: suggestions only, never ownership
+check('an unmanaged app whose name is a cask gets a candidate, with the command as text and the basis stated',
+      [(x['manager'], x['candidate'], x['tier'], x['command']) for x in g('app', 'Manual')['suggestions']] == [('brew', 'manual', 'candidate', 'brew install --cask manual')]
+      and 'name match only' in g('app', 'Manual')['suggestions'][0]['evidence'], g('app', 'Manual'))
+check('a candidate never changes the class or the owner', g('app', 'Manual')['cls'] == 'unmanaged' and g('app', 'Manual')['owner'] == 'none' and g('binary', 'manual-tool')['cls'] == 'unmanaged', '')
+check('an unmanaged command gets a formula candidate, and one from the mise registry',
+      [x['command'] for x in g('binary', 'manual-tool')['suggestions']] == ['brew install manual-tool']
+      and [x['command'] for x in g('binary', 'mystery')['suggestions']] == ['mise use -g aqua:example/mystery'], (g('binary', 'manual-tool')['suggestions'], g('binary', 'mystery')['suggestions']))
+check('a cask that is already installed is not suggested again (step 1 already says so)', 'lookalike' not in [x['candidate'] for x in g('app', 'Lookalike')['suggestions'] if x.get('command')], g('app', 'Lookalike')['suggestions'])
+check('no candidate is said only where the search succeeded', g('binary', 'old-small-tool')['check'] == 'none' and g('binary', 'manual-tool')['check'] == 'found', (g('binary', 'old-small-tool')['check']))
+open(LOG, 'w').close()
+open(os.path.join(ROOT, 'brew-env.log'), 'w').close()
+rc, repc, _ = audit_json()
+cmds = [l.strip() for l in open(LOG)]
+check('the checker makes exactly two brew searches and one registry call, however many items there are',
+      len([c for c in cmds if c.startswith('brew search --cask')]) == 1 and len([c for c in cmds if c.startswith('brew search --formula')]) == 1 and cmds.count('mise registry') == 1, [c[:60] for c in cmds])
+envs = [l.split() for l in open(os.path.join(ROOT, 'brew-env.log'))]
+check('every brew command except search runs with auto-update disabled; search is left to Homebrew', all(v == '1' for c, v in envs if c != 'search') and all(v == 'unset' for c, v in envs if c == 'search') and any(c == 'search' for c, v in envs), envs)
+check('the header says the index was cached when nothing touched it', repc['checker']['index'] == 'cached' and repc['checker']['brew'] == 'ok' and repc['checker']['mise'] == 'ok', repc['checker'])
+rc, repr_, _ = audit_json(FAKE_REFRESH='1')
+check('the header says refreshed when Homebrew refreshed its own index during the search', repr_['checker']['index'] == 'refreshed', repr_['checker'])
+open(os.path.join(ROOT, 'brew-env.log'), 'w').close()
+rc, repo, _ = audit_json(FAKE_REFRESH='1')
+age_old = time.time() - 3 * DAY
+os.utime(os.path.join(HOME, 'Library/Caches/Homebrew/api/cask_names.txt'), (age_old, age_old))
+open(os.path.join(ROOT, 'brew-env.log'), 'w').close()
+rc, out_o, err_o = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', '--offline', '--json', FAKE_REFRESH='1')
+repo = json.loads(out_o)
+envs = [l.split() for l in open(os.path.join(ROOT, 'brew-env.log'))]
+check('--offline keeps auto-update off for search too, so nothing is refreshed, and the header says so',
+      all(v == '1' for c, v in envs) and repo['checker']['index'] == 'cached (offline)' and repo['checker']['offline']
+      and abs(os.stat(os.path.join(HOME, 'Library/Caches/Homebrew/api/cask_names.txt')).st_mtime - age_old) < 2, (envs, repo['checker']))
+rc, repfail, rawf = audit_json(FAKE_SEARCH_FAIL='1')
+check('a failed search is "could not check", never "no candidate", and says so in the header',
+      repfail['checker']['brew'] == 'could not check' and g_ if (g_ := by_name(repfail, 'binary', 'old-small-tool'))['check'] == 'could-not-check' else False, repfail['checker'])
+check('a failed search leaves the earlier evidence-based suggestions alone', by_name(repfail, 'app', 'Updater')['suggestions'][0]['candidate'] == 'teams-like', by_name(repfail, 'app', 'Updater')['suggestions'])
+rc, mdf, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', FAKE_SEARCH_FAIL='1')
+check('the report warns and does not claim "no candidate" for what it could not check', 'Homebrew: could not check' in mdf and 'No candidate found for' not in mdf, mdf[mdf.find('## Adoption'):][:600])
+rc, repreg, _ = audit_json(FAKE_REGISTRY_FAIL='1')
+check('a failed mise registry call is reported, and Homebrew results still stand', repreg['checker']['mise'] == 'could not check' and by_name(repreg, 'app', 'Manual')['suggestions'], repreg['checker'])
+rc, mdc, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', '--check', 'Manual', '--check', 'Nothing Here')
+check('--check NAME adds the name to the report, with a candidate or the honest absence of one',
+      '**Checked `Manual`:** `brew install --cask manual`' in mdc and '**Checked `Nothing Here`:** no candidate found' in mdc, mdc[mdc.find('## Adoption'):][-700:])
+rc, _, errb = sh('audit.py', '--home', HOME, '--check', '--version')
+rc2, _, errb2 = sh('audit.py', '--home', HOME, '--check', 'a;rm -rf x')
+check('--check refuses anything but a plain name', rc != 0 and rc2 != 0 and 'plain name' in errb2, (rc, rc2, errb2))
+st_, none_ = checker.search('--cask', ['zzz-nothing']) if (os.environ.update(PATH=f'{FAKEBIN}:' + os.environ['PATH']) or True) else None
+check('a search with no match is an empty answer, not a failure (Homebrew exits 1 and says so on stderr)', (st_, none_) == ('ok', set()), (st_, none_))
+sg, oc, hd = checker.check(HOME, {'k': 'Lookalike'}, {}, installed_casks={'lookalike'})
+check('an installed cask is skipped by the checker itself', sg['k'] == [] and oc['k'] == 'none', (sg, oc))
+G = lambda *a: common.allowed(['brew', 'search', *a])
+check('the allow-list takes only a plain list of names for brew search',
+      G('--cask', '/^(firefox|a.b_c-d)$/') and G('--formula', '/^(oras)$/')
+      and not any(G(*x) for x in (('--cask', '/^(-x)$/'), ('--cask', '--version'), ('--cask', '/^(a|b/'), ('--cask', '/^(a b)$/'), ('--cask', '/^(a|)$/'), ('--cask', '/^(a)$/ ; x'),
+                                  ('--desc', '/^(a)$/'), ('--cask', '/^(A)$/'), ('--cask', '/^(' + 'a|' * 3000 + 'b)$/'), ('/^(a)$/',))), '')
+check('mise registry is allowed with no arguments only', common.allowed(['mise', 'registry']) and not common.allowed(['mise', 'registry', '--json']) and not common.allowed(['mise', 'install', 'x']))
+check('the map has the adoption section and escapes what it prints', 'Adoption candidates' in htmlmap.render(repc) and '<img' not in htmlmap.candidates_section(
+      {'checker': {'ran': True, 'index': EVIL, 'brew': EVIL, 'mise': 'ok'}, 'items': [{'cls': 'unmanaged', 'kind': 'app', 'name': EVIL, 'suggestions': [{'candidate': EVIL, 'command': EVIL, 'evidence': EVIL}]}]}), '')
+check('nothing ever installs: no logged command is an install, and no suggestion was run',
+      not any(l.split()[:2] in (['brew', 'install'], ['mise', 'use'], ['mise', 'install']) for l in [l.strip() for l in open(LOG)]), '')
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')

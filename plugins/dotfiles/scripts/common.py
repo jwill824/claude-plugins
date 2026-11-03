@@ -3,7 +3,7 @@
 Everything the audit asks of the system goes through `run`, and `run` refuses any command that is not on the
 allow-list below. The list is the whole contract: the audit only asks package managers what they have installed.
 """
-import concurrent.futures, os, shutil, subprocess, time
+import concurrent.futures, os, re, shutil, subprocess, time
 
 # Exact argument lists that may run. `du -sk PATH` is the one pattern with a variable part.
 ALLOWED = (
@@ -21,8 +21,15 @@ ALLOWED = (
     ('cargo', 'install', '--list'),
     ('rustup', 'toolchain', 'list'),
     ('mas', 'list'),
+    ('mise', 'registry'),
     ('crontab', '-l'),
 )
+
+# `brew search --cask|--formula /^(name|name)$/`: the one command with a variable part besides `du`. The pattern can only be a
+# list of plain names (letters, digits, dot, underscore, hyphen; never a leading hyphen), so it cannot carry a flag or a path.
+SEARCH_RE = re.compile(r'^/\^\(([a-z0-9][a-z0-9._-]*\|)*[a-z0-9][a-z0-9._-]*\)\$/$')
+SEARCH_MAX = 6000
+OFFLINE = False       # set by --offline: Homebrew may not refresh its own name index, even for `brew search`
 
 # An audit must never update, analyse or tidy anything as a side effect.
 ENV = {'HOMEBREW_NO_AUTO_UPDATE': '1', 'HOMEBREW_NO_ANALYTICS': '1', 'HOMEBREW_NO_INSTALL_CLEANUP': '1',
@@ -31,25 +38,31 @@ ENV = {'HOMEBREW_NO_AUTO_UPDATE': '1', 'HOMEBREW_NO_ANALYTICS': '1', 'HOMEBREW_N
 
 def allowed(argv):
     argv = tuple(argv)
-    return argv in ALLOWED or (len(argv) == 3 and argv[:2] == ('du', '-sk'))
+    return (argv in ALLOWED or (len(argv) == 3 and argv[:2] == ('du', '-sk'))
+            or (len(argv) == 4 and argv[:2] == ('brew', 'search') and argv[2] in ('--cask', '--formula') and len(argv[3]) <= SEARCH_MAX and bool(SEARCH_RE.match(argv[3]))))
 
 
-def run(argv, timeout=30, with_stderr=False, ok_codes=(0,)):
+def run(argv, timeout=30, with_stderr=False, ok_codes=(0,), no_match=None):
     """Run an allow-listed command. Returns (status, text): 'ok', 'missing' (not installed) or 'failed' (with a reason).
     Some tools (mise) log their findings to stderr, so `with_stderr` appends it to the text. A tool that uses its exit code
     to say "I found something" (`brew missing` exits 1) lists that code in `ok_codes`; a non-zero code only counts as ok when it
-    came with output, so an error that printed nothing to stdout is still a failure."""
+    came with output, so an error that printed nothing to stdout is still a failure. `no_match` is a phrase that, on stderr,
+    marks a non-zero exit as a valid empty answer (`brew search` says "No formulae or casks found" and exits 1)."""
     if not allowed(argv):
         raise ValueError(f'command not on the read-only allow-list: {list(argv)}')
     if shutil.which(argv[0]) is None:
         return 'missing', ''
+    env = dict(os.environ, **ENV)
+    if tuple(argv[:2]) == ('brew', 'search') and not OFFLINE:
+        env = dict(os.environ, **{k: v for k, v in ENV.items() if k != 'HOMEBREW_NO_AUTO_UPDATE'})   # Homebrew's own staleness rule decides
     try:
-        p = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
-                           env=dict(os.environ, **ENV))
+        p = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
         return 'failed', f'timed out after {timeout}s'
     except OSError as e:
         return 'failed', str(e)
+    if p.returncode != 0 and no_match and no_match in p.stderr and p.returncode in ok_codes:
+        return 'ok', ''
     if p.returncode != 0 and not (p.returncode in ok_codes and p.stdout.strip()):
         return 'failed', f'exit {p.returncode}: {(p.stderr or p.stdout).strip()[:200]}'
     return 'ok', p.stdout + (p.stderr if with_stderr else '')

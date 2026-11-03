@@ -190,6 +190,23 @@ code{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding
 '''
 
 
+def candidates_section(rep):
+    ck = rep.get('checker') or {}
+    if not ck.get('ran'):
+        return ''
+    cand = [i for i in rep['items'] if i['cls'] == 'unmanaged' and i['suggestions']]
+    h = (f'<h2>Adoption candidates ({len(cand)})</h2><p class="note">Suggestions only: nothing is installed, and a name match is not proof that two things are the same product. '
+         f"Checked against Homebrew's name index ({e(ck.get('index', 'unknown'))}) and the mise registry.</p>")
+    for k, label in (('brew', 'Homebrew'), ('mise', 'mise registry')):
+        if ck.get(k) not in (None, 'ok', 'not needed'):
+            h += f'<div class="warn"><b>{label}: {e(ck[k])}.</b> "No candidate" is not said for what it would have checked.</div>'
+    if cand:
+        h += ('<table><thead><tr><th>Item</th><th>Candidate</th><th>Command (not run)</th><th>Basis</th></tr></thead><tbody>'
+              + ''.join(f"<tr><td>{e(i['name'])} ({e(i['kind'])})</td><td>{e(s_['candidate'])}</td><td>{e(s_.get('command', ''))}</td><td>{e(s_['evidence'])}</td></tr>"
+                        for i in sorted(cand, key=lambda i: i['name'].lower()) for s_ in i['suggestions']) + '</tbody></table>')
+    return h
+
+
 def missing_section(rep):
     items = rep['items']
     miss = [i for i in items if i['cls'] == 'missing']
@@ -255,7 +272,7 @@ def render(rep):
             f'<div class="tm" role="img" aria-label="Treemap of installed things by owner and size">{treemap(lv)}</div>'
             f'<div class="legend">{legend}</div>'
             '<p class="note">Block size is disk usage. Only things with a measured size are drawn; commands from managers are inside their package.</p>'
-            + missing_section(rep) + dup_section(rep) +
+            + candidates_section(rep) + missing_section(rep) + dup_section(rep) +
             f'<h2>Sources</h2><table><thead><tr><th>Source</th><th>Status</th><th>Packages</th><th>Note</th></tr></thead><tbody>{src}</tbody></table>'
             f'<p class="note">Not read by this version: {e(", ".join(rep["not_covered"]))}. Anything that resolves into their folders is shown as unknown.</p>'
             f'<h2>Orphan candidates ({len(orph)})</h2><p class="note">Candidates, not verdicts. Click a row for the evidence and the key that /dotfiles:tidy takes.</p>'

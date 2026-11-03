@@ -2,7 +2,7 @@
 """Read-only audit of what is installed and who owns it.
 
 For every command on PATH, every application and every dotfile it asks one question: which package manager owns this?
-Whatever nothing claims is reported, with the evidence for the claim. It never installs, removes or modifies anything.
+Whatever nothing claims is reported, with the evidence for the claim. It never installs, removes or modifies anything. The one exception: the checker's `brew search` may let Homebrew refresh its own name index (`--offline` forbids it).
 
 Classes:
   managed       a package manager claims it (brew, mise, npm, uv, cargo, rustup, a cask, the App Store)
@@ -22,7 +22,7 @@ Classes:
 import argparse, datetime, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import adapters, identity, knowledge
+import adapters, checker, common, identity, knowledge
 from common import human, sizes, tilde, birth, age_text
 from refs import Refs
 
@@ -58,7 +58,7 @@ STALE_KB = 100 * 1024     # and large enough to be worth a look
 def item(kind, name, path, owner, cls, evidence, flags=(), kb=None, refs=(), tier=None, suggestions=(), installed_at=None, date_source=None):
     return {'key': f'{kind}:{path or name}', 'kind': kind, 'name': name, 'path': path, 'owner': owner, 'cls': cls,
             'evidence': list(evidence), 'flags': list(flags), 'kb': kb, 'referenced_by': list(refs),
-            'tier': tier, 'suggestions': list(suggestions), 'installed_at': installed_at, 'date_source': date_source}
+            'tier': tier, 'suggestions': list(suggestions), 'installed_at': installed_at, 'date_source': date_source, 'check': None}
 
 
 def uncertain_why(results, refs):
@@ -361,7 +361,7 @@ def find_duplicates(ctx, results, bins):
     return dups, versions
 
 
-def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False, dead_path=()):
+def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_days=60, package_sizes=False, dead_path=(), check_names=()):
     t0 = time.time()
     ctx = Ctx(home, path_dirs, app_dirs)
     results = adapters.collect(ctx)
@@ -388,6 +388,14 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
                 e = knowledge.lookup(d['name']) if d['kind'] == 'dotitem' else None
                 if e and tool in e.needles:
                     i['evidence'].append(f"its folder {tilde(d['path'], home)} is present")
+    brew_pk = results['brew']['packages']
+    todo = [i for i in items if i['cls'] == 'unmanaged' and i['kind'] in ('app', 'binary')]
+    sugg, outcome, header = checker.check(home, {i['key']: i['name'] for i in todo if i['kind'] == 'app'}, {i['key']: i['name'] for i in todo if i['kind'] == 'binary'},
+                                          check_names, {p['name'] for p in brew_pk if p['kind'] == 'cask'}, {p['name'] for p in brew_pk if p['kind'] == 'formula'})
+    for i in todo:       # suggestions only: the class stays whatever the exact evidence made it
+        have = {s_['candidate'] for s_ in i['suggestions']}
+        i['suggestions'] += [s_ for s_ in sugg.get(i['key'], []) if s_['candidate'] not in have]
+        i['check'] = outcome.get(i['key'])
     now = time.time()
     for i in items:      # dates for what the adapters did not already date: folders, unmanaged commands, leftovers
         if i['installed_at'] is None and i['path'] and (i['kind'] in ('dotitem', 'mise-prunable') or (i['kind'] == 'binary' and i['cls'] == 'unmanaged')):
@@ -406,7 +414,8 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
         r = results[n]
         checks.append({'source': n, 'status': 'not installed' if r['status'] == 'missing' else 'checked' if r['status'] == 'ok' and r['extra'].get('missing_check') == 'checked' else 'failed'})
     return {
-        'missing_checks': checks,
+        'missing_checks': checks, 'checker': header,
+        'checked_names': [{'name': t, 'suggestions': sugg.get('typed:' + t, []), 'outcome': outcome.get('typed:' + t)} for t in check_names],
         'duplicates': dups, 'versions': versions, 'duplicates_incomplete': [n for n, r in results.items() if r['status'] == 'failed'],
         'generated': datetime.datetime.now().isoformat(timespec='seconds'), 'home': home, 'seconds': round(time.time() - t0, 1),
         'adapters': [{'name': n, 'status': r['status'], 'detail': r['detail'], 'packages': len(r['packages'])} for n, r in results.items()],
@@ -498,6 +507,25 @@ def render(rep, show_all=False):
         L += ['', f"## Unattributed dot-items ({len(una)})", '', f"Not in the knowledge table ({rep['knowledge_entries']} entries). Largest 15:", '', '| Item | Size | Mentioned by |', '|---|---:|---|']
         for i in una[:15]:
             L.append(f"| `{i['name']}` | {human(i['kb']) if i['kb'] else ''} | {', '.join(i['referenced_by']) or ''} |")
+    ck = rep.get('checker') or {}
+    cand = [i for i in items if i['cls'] == 'unmanaged' and i['suggestions']]
+    if ck.get('ran') or rep.get('checked_names'):
+        L += ['', f'## Adoption candidates ({len(cand)})', '',
+              f"Suggestions only: nothing is installed, and a name match is not proof that two things are the same product. Checked against Homebrew's name index ({ck.get('index', 'unknown')}{'; --offline, so Homebrew was not allowed to refresh it' if ck.get('offline') else ''}) and the mise registry."]
+        if ck.get('brew') not in (None, 'ok', 'not needed'):
+            L.append(f"**Homebrew: {ck['brew']}**, so \"no candidate\" is not said for the items it would have checked.")
+        if ck.get('mise') not in (None, 'ok', 'not needed'):
+            L.append(f"**mise registry: {ck['mise']}**, so commands were not checked against it.")
+        if cand:
+            L += ['', '| Item | Candidate | Command (not run) | Basis |', '|---|---|---|---|']
+            for i in sorted(cand, key=lambda i: i['name'].lower()):
+                for s_ in i['suggestions']:
+                    L.append(f"| {i['name']} ({i['kind']}) | `{s_['candidate']}` | " + (f"`{s_['command']}`" if s_.get('command') else '') + f" | {s_['evidence'][:150]} |")
+        nothing = [i['name'] for i in items if i['cls'] == 'unmanaged' and i['check'] == 'none']
+        if nothing:
+            L += ['', 'No candidate found for: ' + ', '.join(sorted(nothing, key=str.lower)) + '.']
+        for c_ in rep.get('checked_names', []):
+            L += ['', f"**Checked `{c_['name']}`:** " + ('; '.join(f"`{s_['command']}` ({s_['evidence'][:90]})" for s_ in c_['suggestions']) if c_['suggestions'] else 'no candidate found' if c_['outcome'] == 'none' else 'could not check')]
     miss = by('missing')
     checks = rep.get('missing_checks', [])
     L += ['', f'## Missing toolchains and dead PATH entries ({len(miss)} missing)', '']
@@ -561,8 +589,14 @@ def main():
     ap.add_argument('--apps-dir', action='append', help='application folder to scan (default /Applications and ~/Applications)')
     ap.add_argument('--max-seconds', type=int, default=90, help='time budget for sizing folders')
     ap.add_argument('--no-sizes', action='store_true')
+    ap.add_argument('--offline', action='store_true', help='do not let Homebrew refresh its own name index when the checker searches it')
+    ap.add_argument('--check', action='append', default=[], metavar='NAME', help='also look for a manager that offers this name (repeatable); prints suggestions only')
     ap.add_argument('--active-days', type=int, default=60, help='a tool folder written to within this many days is never called an orphan')
     a = ap.parse_args()
+    bad = [n for n in a.check if not checker.TYPED_RE.match(n)]
+    if bad:
+        sys.exit(f'--check takes a plain name (letters, digits, space, dot, hyphen, plus): {bad[0][:40]!r}')
+    common.OFFLINE = a.offline
     home = os.path.abspath(a.home)
     path_dirs, seen, dead = [], set(), []
     for d in os.environ.get('PATH', '').split(os.pathsep):
@@ -572,7 +606,7 @@ def main():
         elif d and os.path.isabs(d) and not os.path.isdir(d) and d not in dead:
             dead.append(d)
     app_dirs = a.apps_dir or ['/Applications', os.path.join(home, 'Applications')]
-    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html), dead_path=dead)
+    rep = audit(home, path_dirs, app_dirs, a.max_seconds, not a.no_sizes, a.active_days, package_sizes=bool(a.html), dead_path=dead, check_names=a.check)
     if a.save:
         with open(a.save, 'w') as f:
             json.dump(rep, f, indent=1)
