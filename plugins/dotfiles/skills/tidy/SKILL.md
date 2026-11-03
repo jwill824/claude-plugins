@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`. Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`.
 
-**This skill prints commands. It does not run them, and you must not run them for the user.** The user reads them and runs the ones they want.
+**This skill prints commands. It does not run them, and you must not run them for the user.** (To have orphan folders and broken links moved to the Trash for them, with a dry run and a confirmation, the user can type `/dotfiles:fix`. Manager removals such as `brew autoremove` and `mise prune` stay here, printed only.) The user reads them and runs the ones they want.
 
 **Non-negotiables:**
 

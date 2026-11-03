@@ -7,7 +7,7 @@ is searched for in every output.
 
     python3 -B tests/test_audit.py
 """
-import json, os, plistlib, shutil, stat, subprocess, sys, tempfile, time
+import json, os, plistlib, shlex, shutil, stat, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, '..', 'scripts')
@@ -116,6 +116,7 @@ case "$1 $2" in
   "python dir") echo "{HOME}/.local/share/uv/python";;
   *) exit 99;;
 esac''')
+    write(os.path.join(FAKEBIN, 'lsof'), '#!/bin/bash\n[ -n "$FAKE_LSOF_FAIL" ] && { echo "lsof: WARNING: boom" >&2; exit 2; }\n[ -n "$FAKE_LSOF_HOLD" ] && { echo 4242; exit 0; }\nexit 1\n', 0o755)
     fake('cargo', 'exit 0')
     fake('rustup', '[ -n "$FAKE_NODEFAULT" ] && echo "stable-x" || echo "stable-x (default)"')
     fake('crontab', 'echo "no crontab for user" >&2; exit 1')
@@ -672,6 +673,217 @@ rc, rep_h, _ = audit_json()
 check('a hostile note or folder name in the accepted state does not become live markup in the map', '<img src=x onerror' not in htmlmap.render(rep_h), '')
 os.unlink(STATE_FILE)
 
+
+# ---- fix: move orphan folders and broken links to the Trash, after a dry run, and nothing else
+import contextlib, io, types  # noqa: E402
+import fix  # noqa: E402
+
+TRASH = os.path.join(ROOT, 'trash')
+for rel in ('.vaadin/a', '.sts4/b', '.config/helix/c'):
+    write(os.path.join(HOME, rel), 'data')
+    age_tree(os.path.join(HOME, '.config/helix' if rel.startswith('.config') else rel.split('/')[0]), 200)
+lbd = os.path.join(HOME, '.local/bin')
+os.symlink(os.path.join(HOME, '.npm/_npx/gone2/bin/ghost2'), os.path.join(lbd, 'ghost2'))
+os.symlink(os.path.join(HOME, '.npm/_npx/gone3/bin/x'), os.path.join(lbd, "it's gone"))
+os.symlink(os.path.join(HOME, '.npm/_npx/gone4/bin/x'), os.path.join(lbd, 'bad\nname'))
+rc, repf, _ = audit_json()
+fa = os.path.join(ROOT, 'fix-audit.json')
+json.dump(repf, open(fa, 'w'))
+KF = lambda kind, name: by_name(repf, kind, name)['key']
+VA, ST, HX, GH = KF('dotitem', '.vaadin'), KF('dotitem', '.sts4'), KF('dotitem', '.config/helix'), KF('broken-link', 'ghost2')
+fx = lambda *a, **kw: sh('fix.py', fa, '--trash-dir', TRASH, *a, **kw)
+PLAN = os.path.join(ROOT, 'plan.json')
+check('the fixtures are orphan candidates for the audit', all(by_name(repf, k, n)['cls'] == 'orphaned' for k, n in (('dotitem', '.vaadin'), ('dotitem', '.sts4'), ('dotitem', '.config/helix'), ('broken-link', 'ghost2'))), '')
+
+rc, out, err = fx('--key', VA, '--key', GH, '--plan', PLAN)
+check('the dry run says nothing moved, shows the table and writes a plan', rc == 0 and 'nothing has been moved' in out and '| `' + VA + '`' in out and os.path.exists(PLAN), out + err)
+check('and it really moved nothing, and did not even create the Trash folder', os.path.exists(os.path.join(HOME, '.vaadin')) and os.path.islink(os.path.join(lbd, 'ghost2')) and not os.path.exists(TRASH), '')
+check('the plan file is private', oct(os.stat(PLAN).st_mode & 0o777) == '0o600', oct(os.stat(PLAN).st_mode))
+for label, args in (('--execute without a plan', ['--execute']), ('--execute with keys instead of a plan', ['--execute', '--plan', PLAN, '--key', VA]), ('a missing plan file', ['--execute', '--plan', PLAN + '.nope'])):
+    rc, out, err = fx(*args)
+    check(f'{label} is refused and nothing moves', rc != 0 and os.path.exists(os.path.join(HOME, '.vaadin')) and not os.path.exists(TRASH), (out + err)[:200])
+plan = json.load(open(PLAN))
+bad = dict(plan, items=[dict(plan['items'][0], path=HOME + '/.ssh')])
+json.dump(bad, open(PLAN + '.bad', 'w'))
+rc, out, err = fx('--execute', '--plan', PLAN + '.bad')
+check('a plan edited after the dry run is refused (its hash no longer matches), and nothing moves', 'Refused' in out and os.path.exists(os.path.join(HOME, '.ssh')) and os.path.exists(os.path.join(HOME, '.vaadin')), out)
+old_plan = dict(plan, created=time.time() - 7200)
+old_plan['sha256'] = fix.plan_hash(old_plan)
+json.dump(old_plan, open(PLAN + '.old', 'w'))
+rc, out, err = fx('--execute', '--plan', PLAN + '.old')
+check('a valid but old plan is refused', 'older than 60 minutes' in out and os.path.exists(os.path.join(HOME, '.vaadin')), out)
+rc, out, err = sh('fix.py', fa, '--trash-dir', os.path.join(ROOT, 'other-trash'), '--execute', '--plan', PLAN)
+check('a plan made for another Trash folder is refused', 'different home folder or Trash' in out and os.path.exists(os.path.join(HOME, '.vaadin')), out)
+
+rc, out, err = fx('--execute', '--plan', PLAN)
+trashed = sorted(os.listdir(TRASH)) if os.path.isdir(TRASH) else []
+check('executing the plan moves exactly the two approved items into the Trash, with timestamped names',
+      rc == 0 and len(trashed) == 2 and any(t.startswith('.vaadin 20') for t in trashed) and any(t.startswith('ghost2 20') for t in trashed), (out, trashed))
+check('the folder left home, arrived whole, and the link arrived as a link',
+      not os.path.lexists(os.path.join(HOME, '.vaadin')) and open(os.path.join(TRASH, [t for t in trashed if t.startswith('.vaadin')][0], 'a')).read() == 'data'
+      and os.path.islink(os.path.join(TRASH, [t for t in trashed if t.startswith('ghost2')][0])) and not os.path.lexists(os.path.join(lbd, 'ghost2')), trashed)
+check('nothing else moved', os.path.exists(os.path.join(HOME, '.sts4')) and os.path.exists(os.path.join(HOME, '.config/helix')) and os.path.exists(os.path.join(HOME, '.terraform.d')), '')
+lg = [json.loads(l) for l in open(os.path.join(STATE, 'fix-log.jsonl'))]
+check('the log records both moves, privately', [e['status'] for e in lg] == ['moved', 'moved'] and oct(os.stat(os.path.join(STATE, 'fix-log.jsonl')).st_mode & 0o777) == '0o600', lg)
+mvs = [shlex.split(l) for l in out.splitlines() if l.startswith('mv -- ')]
+check('it prints one mv per item that puts it back, and says nothing was deleted', len(mvs) == 2 and 'Nothing was deleted' in out, out)
+for _mv, _dd, dst, src in mvs:
+    os.rename(dst, src)
+check('running the printed mv puts everything back as it was', os.path.exists(os.path.join(HOME, '.vaadin/a')) and os.path.islink(os.path.join(lbd, 'ghost2')), '')
+rc, out, err = fx('--execute', '--plan', PLAN)
+check('a plan is used once: replaying it after the user put things back is refused, and nothing moves again',
+      rc != 0 and 'already been carried out' in out and os.path.exists(os.path.join(HOME, '.vaadin/a')) and os.path.islink(os.path.join(lbd, 'ghost2')), out)
+
+# held: each gate has its own reason, and nothing moves
+def dry(*keys, **env_):
+    rc, out, err = fx(*sum((['--key', k] for k in keys), []), '--plan', PLAN + '.t', **env_)
+    return out + err
+
+
+o = dry(KF('binary', 'manual-tool'))
+check('a command that is not an orphan is not offered', 'it is unmanaged' in o and 'Nothing can be moved' in o, o)
+o = dry(KF('mise-prunable', 'jq@1.0.0'))
+check('a manager item is not movable here and points to tidy', 'not movable here' in o and '/dotfiles:tidy' in o, o)
+o = dry('dotitem:/nowhere')
+check('an unknown key is held', 'not in this audit' in o, o)
+rc, _o, _e = sh('accept.py', fa, '--key', ST, '--note', 'keep for now')
+o = dry(ST)
+check('an accepted orphan is never moved', 'you accepted it' in o and 'Nothing can be moved' in o and os.path.exists(os.path.join(HOME, '.sts4')), o)
+sh('accept.py', fa, '--forget', '--key', ST)
+write(os.path.join(HOME, '.sts4/id_rsa'), 'not a real key', age_days=200)
+os.utime(os.path.join(HOME, '.sts4'), (time.time() - 200 * DAY,) * 2)
+o = dry(ST)
+check('a folder holding a file named like a key is held, by name only', 'possible key material (id_rsa' in o and 'not a real key' not in o, o)
+os.unlink(os.path.join(HOME, '.sts4/id_rsa'))
+check('a name like tokenizer is not mistaken for a credential, and a .pem is', not fix.KEY_NAMES.match('tokenizer') and not fix.KEY_NAMES.match('environment.js') and fix.KEY_NAMES.match('x.pem')
+      and fix.KEY_NAMES.match('.env.local') and fix.KEY_NAMES.match('id_ed25519') and fix.KEY_NAMES.match('token.json'), '')
+os.utime(os.path.join(HOME, '.sts4'), (time.time() - 200 * DAY,) * 2)
+o = dry(ST, FAKE_LSOF_HOLD='1')
+check('a folder something has open is held', 'in use: process 4242' in o and 'Nothing can be moved' in o, o)
+o = dry(ST, FAKE_LSOF_FAIL='1')
+check('when lsof cannot answer the folder is held, never assumed free', 'could not tell whether it is in use' in o and 'Nothing can be moved' in o, o)
+o = dry(ST)
+check('with lsof saying nothing holds it, it is offered', 'Would move 1 item' in o, o)
+
+# in-process: the path and device gates, in isolation from the audit's own re-check
+real_recheck, real_which, real_ismount, real_dev = fix.gates.recheck, fix.shutil.which, os.path.ismount, fix.device_of
+fix.gates.recheck = lambda *a, **k: None
+ctx0 = {'home': HOME, 'trash': TRASH, 'refs': types.SimpleNamespace(unreadable=[], find_path=lambda rel: []), 'records': {}, 'active_days': 60}
+mk = lambda path, kind='dotitem', key=None: {'key': key or kind + ':' + path, 'kind': kind, 'path': path, 'name': os.path.basename(path), 'cls': 'orphaned', 'evidence': ['x'], 'kb': 1}
+outside = os.path.join(ROOT, 'outside-home')
+write(os.path.join(outside, 'f'), 'x', age_days=200)
+try:
+    why = lambda i, c=None: fix.check_item(i, c or ctx0)
+    check('the home folder itself is never moved', 'outside your home folder' in (why(mk(HOME)) or ''), why(mk(HOME)))
+    check('something outside the home folder is held, with a pointer to tidy', 'outside your home folder' in (why(mk(outside)) or '') and '/dotfiles:tidy' in why(mk(outside)), why(mk(outside)))
+    os.makedirs(os.path.join(HOME, '.Trash-test'), exist_ok=True)
+    ctx_t = dict(ctx0, trash=os.path.join(HOME, '.Trash-test'))
+    check('the Trash itself is never moved', 'Trash' in (why(mk(os.path.join(HOME, '.Trash-test')), ctx_t) or ''), why(mk(os.path.join(HOME, '.Trash-test')), ctx_t))
+    os.path.ismount = lambda p: True
+    check('a mount point is held', 'mount point' in (why(mk(os.path.join(HOME, '.config/helix'))) or ''), why(mk(os.path.join(HOME, '.config/helix'))))
+    os.path.ismount = real_ismount
+    fix.device_of = lambda p: -1
+    check('an item on a different volume than the Trash is held: it would need a copy, which this tool never makes', 'different volume' in (why(mk(os.path.join(HOME, '.config/helix'))) or ''), why(mk(os.path.join(HOME, '.config/helix'))))
+    fix.device_of = real_dev
+    check('a name with a control character is held', 'control characters' in (why(mk(os.path.join(lbd, 'bad\nname'), 'broken-link')) or ''), '')
+    fix.shutil.which = lambda n: None
+    check('with no lsof at all a folder is held', 'lsof is not available' in (why(mk(os.path.join(HOME, '.config/helix'))) or ''), why(mk(os.path.join(HOME, '.config/helix'))))
+    fix.shutil.which = real_which
+    ctx_bad = dict(ctx0, refs=types.SimpleNamespace(unreadable=['~/.zshrc'], find_path=lambda rel: []))
+    fix.gates.recheck = real_recheck
+    check('when a config file cannot be read the folder is held', 'could not read' in (why(by_name(repf, 'dotitem', '.config/helix'), ctx_bad) or ''), '')
+    fix.gates.recheck = lambda *a, **k: None
+    if os.geteuid() != 0:
+        os.makedirs(os.path.join(ROOT, 'ro'), exist_ok=True)
+        write(os.path.join(ROOT, 'ro/f'), 'x')
+        ctx_ro = dict(ctx0, home=ROOT)
+        os.chmod(os.path.join(ROOT, 'ro'), 0o500)
+        check('an item in a folder you cannot write to is held', 'not writable' in (why(mk(os.path.join(ROOT, 'ro/f')), ctx_ro) or ''), why(mk(os.path.join(ROOT, 'ro/f')), ctx_ro))
+        os.chmod(os.path.join(ROOT, 'ro'), 0o700)
+        os.makedirs(os.path.join(ROOT, 'rotrash'), exist_ok=True)
+        os.chmod(os.path.join(ROOT, 'rotrash'), 0o500)
+        check('a Trash folder you cannot write to is held, with the Full Disk Access hint', 'Full Disk Access' in (why(mk(os.path.join(HOME, '.config/helix')), dict(ctx0, trash=os.path.join(ROOT, 'rotrash'))) or ''), '')
+        os.chmod(os.path.join(ROOT, 'rotrash'), 0o700)
+finally:
+    fix.gates.recheck, fix.shutil.which = real_recheck, real_which
+    os.path.ismount = real_ismount
+    fix.device_of = real_dev
+p1 = {'dev': 1, 'ino': 2, 'islink': False, 'link': None, 'real_parent': '/a', 'newest': 100}
+check('drift is detected for each thing that identifies the item, and for a newer write', all(fix.drifted(p1, dict(p1, **{k: v})) for k, v in (('dev', 9), ('ino', 9), ('islink', True), ('link', 'x'), ('real_parent', '/b'), ('newest', 101)))
+      and fix.drifted(p1, dict(p1)) is None, '')
+
+# at execute time: changed since the plan
+rc, out, err = fx('--key', ST, '--key', HX, '--plan', PLAN)
+assert rc == 0, out
+shutil.rmtree(os.path.join(HOME, '.sts4'))
+write(os.path.join(HOME, '.sts4/b'), 'data')
+age_tree(os.path.join(HOME, '.sts4'), 200)
+write(os.path.join(HOME, '.config/helix/new-file'), 'written after the plan')
+rc, out, err = fx('--execute', '--plan', PLAN)
+check('an item replaced after the plan (a new folder under the same name) is held as changed, and one written to after the plan is held too, and nothing moves',
+      'changed since the plan was made (ino' in out and 'wrote to it within' in out and os.path.exists(os.path.join(HOME, '.sts4')) and os.path.exists(os.path.join(HOME, '.config/helix')) and rc != 0, out)
+os.unlink(os.path.join(HOME, '.config/helix/new-file'))
+age_tree(os.path.join(HOME, '.config/helix'), 200)
+zsh0 = open(os.path.join(HOME, '.zshrc')).read()
+rc, out, err = fx('--key', HX, '--plan', PLAN)
+write(os.path.join(HOME, '.zshrc'), zsh0 + 'export P="$HOME/.config/helix/bin:$P"\n')
+rc, out, err = fx('--execute', '--plan', PLAN)
+check('a config file that starts mentioning the folder after the plan holds it at execute time, and the file is not echoed', 'config files now mention it' in out and SENTINEL not in out and os.path.exists(os.path.join(HOME, '.config/helix')), out)
+write(os.path.join(HOME, '.zshrc'), zsh0)
+
+# partial: one fails (permission), the other still moves, and nothing is deleted
+rc, out, err = fx('--key', ST, '--key', HX, '--plan', PLAN)
+os.environ['DOTFILES_STATE'] = STATE
+os.environ['HOME'] = HOME
+real_rename = os.rename
+def picky(src, dst):
+    if src.endswith('/.sts4'):
+        raise PermissionError(1, 'Operation not permitted')
+    return real_rename(src, dst)
+os.rename = picky
+buf = io.StringIO()
+try:
+    ctx1 = dict(ctx0, refs=__import__('refs').Refs(HOME))
+    with contextlib.redirect_stdout(buf):
+        code = fix.execute(types.SimpleNamespace(plan=PLAN), {i['key']: i for i in repf['items']}, ctx1)
+finally:
+    os.rename = real_rename
+txt = buf.getvalue()
+check('a refused move is FAILED with the Full Disk Access hint and nothing deleted, while the other item still moves',
+      code == 1 and 'FAILED' in txt and 'Full Disk Access' in txt and 'nothing was deleted' in txt and os.path.exists(os.path.join(HOME, '.sts4')) and not os.path.lexists(os.path.join(HOME, '.config/helix')), txt)
+for t_ in os.listdir(TRASH):
+    if t_.startswith('helix'):
+        os.rename(os.path.join(TRASH, t_), os.path.join(HOME, '.config/helix'))
+# quoting: a name with a quote and a space round-trips through shlex, and a name with a newline is held
+rcq, repq, _ = audit_json()
+fq = os.path.join(ROOT, 'fix-audit-q.json')
+json.dump(repq, open(fq, 'w'))
+QK = by_name(repq, 'broken-link', "it's gone")['key']
+rc, out, err = sh('fix.py', fq, '--trash-dir', TRASH, '--key', QK, '--plan', PLAN)
+rc, out, err = sh('fix.py', fq, '--trash-dir', TRASH, '--execute', '--plan', PLAN)
+mvq = [shlex.split(l) for l in out.splitlines() if l.startswith('mv -- ')]
+check('the printed restore command survives a quote and a space in the name', len(mvq) == 1 and mvq[0][3] == os.path.join(lbd, "it's gone") and mvq[0][2].startswith(TRASH), (out, mvq))
+os.rename(mvq[0][2], mvq[0][3])
+NL = by_name(repq, 'broken-link', 'bad\nname')
+rc, out, err = sh('fix.py', fq, '--trash-dir', TRASH, '--key', NL['key'], '--plan', PLAN)
+check('a name with a newline in it is held', 'control characters' in out and os.path.lexists(NL['path']), out)
+# platform: no default Trash off macOS
+real_platform, real_argv = sys.platform, sys.argv
+sys.platform, sys.argv = 'linux', ['fix.py', fa, '--key', ST]
+try:
+    fix.main()
+    refused = ''
+except SystemExit as e_:
+    refused = str(e_)
+finally:
+    sys.platform, sys.argv = real_platform, real_argv
+check('off macOS the tool refuses unless a Trash folder is named', '--trash-dir' in refused, refused)
+fsrc = open(os.path.join(SCRIPTS, 'fix.py')).read()
+bad_calls = [b for b in ('rmtree', 'os.remove', 'os.unlink', '.unlink(', 'rmdir', 'shutil.move', 'sudo', '--force', 'rm -', 'shutil.copy') if b in fsrc]
+check('the executor contains no deletion, copy, elevation or force: its only mutation is a rename into the Trash', not bad_calls and fsrc.count('os.rename(') == 1, bad_calls)
+check('the real Trash was never touched by these tests', not os.path.exists(os.path.join(HOME, '.Trash')), '')
+rc, out_t, _ = sh('tidy.py', fa, '--key', VA, '--key', HX)
+check('tidy is unchanged by the shared checks: it still prints Trash moves for orphans', out_t.count('mv -- ') == 2 and 'Cleanup commands (not run)' in out_t, out_t)
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
