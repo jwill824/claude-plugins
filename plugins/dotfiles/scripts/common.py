@@ -10,9 +10,11 @@ ALLOWED = (
     ('brew', '--prefix'),
     ('brew', 'info', '--json=v2', '--installed'),
     ('brew', 'autoremove', '-n'),
+    ('brew', 'missing'),
     ('mise', 'ls', '--json'),
     ('mise', 'ls', '--prunable'),
     ('mise', 'prune', '--dry-run'),
+    ('mise', 'ls', '--missing'),
     ('uv', 'tool', 'list'),
     ('uv', 'tool', 'dir'),
     ('uv', 'python', 'dir'),
@@ -32,9 +34,11 @@ def allowed(argv):
     return argv in ALLOWED or (len(argv) == 3 and argv[:2] == ('du', '-sk'))
 
 
-def run(argv, timeout=30, with_stderr=False):
+def run(argv, timeout=30, with_stderr=False, ok_codes=(0,)):
     """Run an allow-listed command. Returns (status, text): 'ok', 'missing' (not installed) or 'failed' (with a reason).
-    Some tools (mise) log their findings to stderr, so `with_stderr` appends it to the text."""
+    Some tools (mise) log their findings to stderr, so `with_stderr` appends it to the text. A tool that uses its exit code
+    to say "I found something" (`brew missing` exits 1) lists that code in `ok_codes`; a non-zero code only counts as ok when it
+    came with output, so an error that printed nothing to stdout is still a failure."""
     if not allowed(argv):
         raise ValueError(f'command not on the read-only allow-list: {list(argv)}')
     if shutil.which(argv[0]) is None:
@@ -46,7 +50,7 @@ def run(argv, timeout=30, with_stderr=False):
         return 'failed', f'timed out after {timeout}s'
     except OSError as e:
         return 'failed', str(e)
-    if p.returncode != 0:
+    if p.returncode != 0 and not (p.returncode in ok_codes and p.stdout.strip()):
         return 'failed', f'exit {p.returncode}: {(p.stderr or p.stdout).strip()[:200]}'
     return 'ok', p.stdout + (p.stderr if with_stderr else '')
 

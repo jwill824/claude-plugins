@@ -83,7 +83,7 @@ Audits what is installed on a Mac and who owns it. It **does not manage dotfiles
 
 | Command | What happens |
 |---|---|
-| `/dotfiles:audit [--html FILE]` | Lists what is installed by source (Homebrew, mise, npm, uv, cargo, apps), which commands and dotfiles no package manager claims, and leftovers whose tool is gone, and tools installed through more than one manager (which copy is active, and which system copy is shadowed). `--html` also writes a self-contained treemap of it by owner and size. Read-only. Claude can start it from a plain question ("what's installed on this machine?") |
+| `/dotfiles:audit [--html FILE]` | Lists what is installed by source (Homebrew, mise, npm, uv, cargo, apps), which commands and dotfiles no package manager claims, and leftovers whose tool is gone, and tools installed through more than one manager (which copy is active, and which system copy is shadowed), toolchains a manager says are missing, and PATH entries that point nowhere. `--html` also writes a self-contained treemap of it by owner and size. Read-only. Claude can start it from a plain question ("what's installed on this machine?") |
 | `/dotfiles:tidy` | Prints, and never runs, the commands for the orphan candidates you pick. Typed-only |
 
 Every item is classed by who owns it, and every claim carries its evidence:

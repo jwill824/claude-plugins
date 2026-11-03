@@ -73,6 +73,8 @@ def build_world():
   --prefix) echo "{prefix}";;
   info) cat "{ROOT}/brew-info.json";;
   autoremove) echo "==> Would autoremove 1 unneeded formulae:"; echo "oldlib";;
+  missing) [ -n "$FAKE_BREW_MISSING_FAIL" ] && {{ echo "brew: boom" >&2; exit 2; }}
+           [ -n "$FAKE_MISSING" ] && {{ echo "foo: libgone libalso"; exit 1; }}; exit 0;;
   *) exit 99;;
 esac''')
     node = os.path.join(HOME, '.local/share/mise/installs/node/22.0.0')
@@ -86,6 +88,8 @@ esac''')
     fake('mise', f'''case "$1 $2" in
   "ls --json") cat "{ROOT}/mise-ls.json";;
   "ls --prunable") echo "jq  1.0.0";;
+  "ls --missing") [ -n "$FAKE_MISE_MISSING_FAIL" ] && {{ echo "mise: boom" >&2; exit 1; }}
+                  [ -n "$FAKE_MISSING" ] && echo "terraform  1.9.0 (missing)  ~/.config/mise/config.toml  1.9"; exit 0;;
   "prune --dry-run") echo "mise jq@1.0.0 is prunable: no tracked config or tool stub requires jq" >&2;;
   *) exit 99;;
 esac''')
@@ -97,7 +101,7 @@ case "$1 $2" in
   *) exit 99;;
 esac''')
     fake('cargo', 'exit 0')
-    fake('rustup', 'echo "stable-x (default)"')
+    fake('rustup', '[ -n "$FAKE_NODEFAULT" ] && echo "stable-x" || echo "stable-x (default)"')
     fake('crontab', 'echo "no crontab for user" >&2; exit 1')
     # brew-owned command: a link from bin into the Cellar
     write(os.path.join(prefix, 'Cellar/foo/1.0/bin/foo'), 'x' * 20000, 0o755)
@@ -376,6 +380,54 @@ rc, repf, _ = audit_json(FAKE_UV_FAIL='1')
 check('a failed adapter marks the duplicate list as possibly incomplete', repf['duplicates_incomplete'] == ['uv'], repf['duplicates_incomplete'])
 check('the map has a duplicates section', '<h2>Duplicate installs (1)' in htmlmap.render(repd), '')
 check('a duplicate\'s tool, owner and notes are escaped in the map', htmlmap.dup_section({'duplicates': [{'tool': EVIL, 'active': None, 'copies': [{'owner': EVIL, 'version': ''}], 'notes': [EVIL]}], 'versions': []}).count('<img') == 0, '')
+
+# ---- missing toolchains and dead PATH entries
+check('with nothing missing, the report says none were reported, by the sources that were actually checked',
+      repd['missing_checks'] == [{'source': s_, 'status': 'checked'} for s_ in ('mise', 'brew', 'rustup')] and not [i for i in repd['items'] if i['cls'] == 'missing']
+      and 'None reported by mise, brew, rustup.' in mdd, repd['missing_checks'])
+DEAD = os.path.join(ROOT, 'no-such-bin')
+rc, repm, rawm = audit_json(FAKE_MISSING='1', FAKE_NODEFAULT='1', PATH=f'{PBIN}:{FAKEBIN}:{DEAD}:/var/run/com.apple/fake/bin:/usr/bin:/bin')
+ms = {i['name']: i for i in repm['items'] if i['cls'] == 'missing'}
+check('a toolchain mise lists as missing is reported with the manager\'s own line',
+      'terraform@1.9.0' in ms and ms['terraform@1.9.0']['owner'] == 'mise' and 'ls --missing' in ms['terraform@1.9.0']['evidence'][0] and '1.9.0 (missing)' in ms['terraform@1.9.0']['evidence'][0], ms)
+check('`brew missing` exiting 1 with a pair is read as a finding, not a failure', 'foo' in ms and ms['foo']['owner'] == 'brew' and 'libgone libalso' in ms['foo']['evidence'][0], ms)
+check('rustup with toolchains but none marked default is a signal', 'rustup default' in ms and ms['rustup default']['owner'] == 'rustup', ms)
+check('a missing toolchain is its own class, never an orphan, and tidy refuses it', ms['terraform@1.9.0']['cls'] == 'missing' and all(i['cls'] != 'orphaned' or i['kind'] != 'missing-toolchain' for i in repm['items']), '')
+check('the folder waiting for a missing toolchain is not an orphan candidate: the manager declares the tool',
+      by_name(repm, 'dotitem', '.terraform.d')['cls'] == 'referenced' and 'declares' in by_name(repm, 'dotitem', '.terraform.d')['evidence'][0], by_name(repm, 'dotitem', '.terraform.d'))
+check('and the missing item notes that its folder is present', any('.terraform.d' in e_ and 'present' in e_ for e_ in ms['terraform@1.9.0']['evidence']), ms['terraform@1.9.0'])
+dead = [i for i in repm['items'] if i['kind'] == 'path-dead']
+check('a PATH entry that does not exist is listed as config, and an OS-managed one is not', [i['path'] for i in dead] == [DEAD] and dead[0]['cls'] == 'config', dead)
+afile = os.path.join(ROOT, 'a-file-on-path')
+write(afile, 'x')
+rc, repf2, _ = audit_json(PATH=f'{FAKEBIN}:{afile}:/usr/bin:/bin')
+check('a PATH entry that is a file says it is not a folder', [i['evidence'] for i in repf2['items'] if i['kind'] == 'path-dead'] == [['on PATH, but it is not a folder']], [i['evidence'] for i in repf2['items'] if i['kind'] == 'path-dead'])
+rc, mdm, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', FAKE_MISSING='1', PATH=f'{PBIN}:{FAKEBIN}:{DEAD}:/usr/bin:/bin')
+check('the report lists missing toolchains and the dead entry', '(2 missing)' in mdm and '`terraform@1.9.0`' in mdm and 'does not exist' in mdm and 'None reported' not in mdm, mdm[mdm.find('## Missing'):][:900])
+rc, repx, _ = audit_json(FAKE_MISE_MISSING_FAIL='1', FAKE_BREW_MISSING_FAIL='1')
+check('a failed check is never reported as none: it says could not check, and the adapter itself stays ok',
+      {c['source']: c['status'] for c in repx['missing_checks']} == {'mise': 'failed', 'brew': 'failed', 'rustup': 'checked'}
+      and {a['name']: a['status'] for a in repx['adapters']}['brew'] == 'ok', repx['missing_checks'])
+rc, mdx, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', FAKE_MISE_MISSING_FAIL='1', FAKE_BREW_MISSING_FAIL='1')
+check('the report says "could not check" and does not say none were reported by them', 'Could not check mise, brew' in mdx and 'None reported by rustup' in mdx and 'None reported by mise' not in mdx, mdx[mdx.find('## Missing'):][:500])
+import common  # noqa: E402
+check('the two new commands are on the allow-list and nothing like them is', common.allowed(['brew', 'missing']) and common.allowed(['mise', 'ls', '--missing'])
+      and not common.allowed(['brew', 'missing', '--force']) and not common.allowed(['mise', 'ls', '--missing', 'x']))
+os.environ.update(PATH=f'{FAKEBIN}:' + os.environ['PATH'], DOTFILES_TEST_LOG=LOG)
+st0 = common.run(['brew', 'missing'], ok_codes=(0, 1))
+os.environ['FAKE_MISSING'] = '1'
+st1 = common.run(['brew', 'missing'], ok_codes=(0, 1))
+st2 = common.run(['brew', 'missing'])
+os.environ.pop('FAKE_MISSING')
+os.environ['FAKE_BREW_MISSING_FAIL'] = '1'
+st3 = common.run(['brew', 'missing'], ok_codes=(0, 1, 2))
+os.environ.pop('FAKE_BREW_MISSING_FAIL')
+check('a non-zero exit code is ok only when listed AND it came with output (exit 1 with a list is ok, bare exit 2 with only stderr never is)',
+      st0 == ('ok', '') and st1[0] == 'ok' and 'libgone' in st1[1] and st2[0] == 'failed' and st3[0] == 'failed', (st0, st1, st2, st3))
+check('the map has the section', 'Missing toolchains and dead PATH entries (3 missing)' in htmlmap.render(repm), '')
+check('names in the missing section are escaped', '<img' not in htmlmap.missing_section({'home': HOME, 'missing_checks': [], 'items': [
+      {'cls': 'missing', 'kind': 'missing-toolchain', 'name': EVIL, 'owner': EVIL, 'evidence': [EVIL], 'path': ''},
+      {'cls': 'config', 'kind': 'path-dead', 'name': EVIL, 'owner': 'none', 'evidence': [EVIL], 'path': '/' + EVIL}]}), '')
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
