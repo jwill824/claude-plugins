@@ -12,7 +12,7 @@ import json, os, plistlib, shutil, stat, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, '..', 'scripts')
 sys.path.insert(0, SCRIPTS)
-from common import ALLOWED  # noqa: E402
+from common import ALLOWED, age_text, birth  # noqa: E402
 
 ROOT = os.path.realpath(tempfile.mkdtemp(prefix='dotfiles-test-'))
 HOME = os.path.join(ROOT, 'home')
@@ -21,6 +21,8 @@ LOG = os.path.join(ROOT, 'cmd.log')
 SENTINEL = 'SENTINEL-SECRET-4f8a1c'
 HOSTILE = '.<img src=x onerror=alert(1)>'
 DAY = 86400
+NOW = int(time.time())
+BIRTH = 'birthtime' if hasattr(os.stat('/'), 'st_birthtime') else 'mtime'   # what this OS can tell us
 FAILS = []
 
 
@@ -57,10 +59,10 @@ def build_world():
     os.makedirs(HOME)
     prefix = os.path.join(HOME, 'brewprefix')
     brew_info = {'formulae': [
-        {'name': 'foo', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
+        {'name': 'foo', 'installed': [{'version': '1.0', 'installed_on_request': True, 'time': NOW - 400 * DAY}]},
         {'name': 'cocoapods', 'installed': [{'version': '1.0', 'installed_on_request': True}]},
         {'name': 'oldlib', 'installed': [{'version': '0.1', 'installed_on_request': False}]}],
-        'casks': [{'token': 'cask-app', 'installed': '2.0', 'artifacts': [{'app': ['Cask.app']}]},
+        'casks': [{'token': 'cask-app', 'installed': '2.0', 'installed_time': NOW - 45 * DAY, 'artifacts': [{'app': ['Cask.app']}]},
                   # a pkg cask: no app artifact, and the app's bundle id is in pkgutil, not quit (as with Microsoft Teams)
                   {'token': 'teams-like', 'installed': '1.0', 'artifacts': [{'pkg': ['x.pkg']}, {'uninstall': [{'quit': ['com.example.updater'], 'pkgutil': ['com.example.teams', 'com.example.*']}]}]},
                   # a cask that shares a name with an app but installs something else (a CLI)
@@ -107,6 +109,12 @@ esac''')
     os.makedirs(lb, exist_ok=True)
     os.symlink(os.path.join(HOME, '.local/share/uv/tools/uvtool/bin/uvtool'), os.path.join(lb, 'uvtool'))
     write(os.path.join(lb, 'manual-tool'), 'x' * 2048, 0o755)
+    for name, mb, age in (('old-big-tool', 120, 500), ('new-big-tool', 120, 3), ('old-small-tool', 0, 500)):   # sparse files: no real disk used
+        p = os.path.join(lb, name)
+        write(p, 'x', 0o755)
+        if mb:
+            os.truncate(p, mb * 1024 * 1024)
+        os.utime(p, (time.time() - age * DAY,) * 2)
     write(os.path.join(HOME, '.npm/_npx/x/bin/cachey'), '', 0o755)
     os.symlink(os.path.join(HOME, '.npm/_npx/x/bin/cachey'), os.path.join(lb, 'cachey'))
     os.symlink(os.path.join(HOME, '.npm/_npx/gone/bin/ghost'), os.path.join(lb, 'ghost'))
@@ -196,6 +204,25 @@ check('a bundle id found only in a cask\'s quit list is not proof: unmanaged, wi
       and g('app', 'Updater')['suggestions'][0]['candidate'] == 'teams-like' and 'quit list' in g('app', 'Updater')['suggestions'][0]['evidence'], g('app', 'Updater'))
 check('an app with no match has no suggestions', g('app', 'Manual')['suggestions'] == [], g('app', 'Manual'))
 
+# ---- install dates: only from a real record, and honest about where they came from
+pk = {(p['kind'], p['name']): p for p in rep['inventory']['brew']}
+check('a Homebrew formula carries the install time Homebrew recorded', pk[('formula', 'foo')]['installed_at'] == NOW - 400 * DAY and pk[('formula', 'foo')]['date_source'] == 'brew', pk[('formula', 'foo')])
+check('a Homebrew cask carries its installed_time', pk[('cask', 'cask-app')]['installed_at'] == NOW - 45 * DAY, pk[('cask', 'cask-app')])
+check('a formula with no recorded time gets no date, never an invented one', pk[('formula', 'cocoapods')]['installed_at'] is None, pk[('formula', 'cocoapods')])
+mi = next(p for p in rep['inventory']['mise'] if p['name'] == 'node')
+check('a mise install is dated from the folder, with the source this OS offers', mi['installed_at'] and mi['date_source'] == BIRTH, mi)
+check('a dot-folder is dated too, with the same source', g('dotitem', '.terraform.d')['date_source'] == BIRTH and g('dotitem', '.terraform.d')['installed_at'], g('dotitem', '.terraform.d'))
+check('an app is dated', g('app', 'Manual')['installed_at'] and g('app', 'Manual')['date_source'] == BIRTH, g('app', 'Manual'))
+check('age_text says nothing when there is no date', age_text(None, 'brew') == '' and birth(HOME + '/no/such/path') == (None, None))
+check('age_text speaks in months and years, and marks a bare mtime with ~',
+      age_text(NOW - 5 * DAY, 'birthtime', NOW) == 'this month' and age_text(NOW - 400 * DAY, 'brew', NOW) == '13 months ago'
+      and age_text(NOW - 800 * DAY, 'mtime', NOW) == '~2.2 years ago', [age_text(NOW - 5 * DAY, 'birthtime', NOW), age_text(NOW - 400 * DAY, 'brew', NOW), age_text(NOW - 800 * DAY, 'mtime', NOW)])
+flagged = lambda n: 'stale-candidate' in g('binary', n)['flags']
+check('a large, old, unmanaged command is flagged as a stale candidate (where the date is a creation time)',
+      flagged('old-big-tool') == (BIRTH == 'birthtime'), (BIRTH, g('binary', 'old-big-tool')['installed_at'], g('binary', 'old-big-tool')['flags']))
+check('a recent large command, and an old small one, are not flagged', not flagged('new-big-tool') and not flagged('old-small-tool'), (g('binary', 'new-big-tool')['flags'], g('binary', 'old-small-tool')['flags']))
+check('the flag never changes the class', g('binary', 'old-big-tool')['cls'] == 'unmanaged', g('binary', 'old-big-tool'))
+
 # ---- manager verdicts and dot items
 check("brew's own orphan verdict is reported with its evidence", g('brew-orphan', 'oldlib') and 'autoremove' in g('brew-orphan', 'oldlib')['evidence'][0], g('brew-orphan', 'oldlib'))
 check("mise's own prunable verdict is reported with its reason", g('mise-prunable', 'jq@1.0.0') and 'no tracked config' in g('mise-prunable', 'jq@1.0.0')['evidence'][0], g('mise-prunable', 'jq@1.0.0'))
@@ -222,6 +249,7 @@ check('autoremove and prune only ever ran as dry runs',
       all(('autoremove' not in l or ' -n' in l) and ('prune' not in l or '--dry-run' in l) for l in logged), logged)
 rc, md, err = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes')
 check('the markdown report prints and carries the evidence header', rc == 0 and '## Sources' in md and 'Not read by this version' in md, md[:200])
+check('the report shows ages and explains where dates come from', ' ago' in md and '_Dates:' in md and 'Installed' in md, md[-700:])
 check('a planted secret never appears in the report or the JSON', SENTINEL not in md and SENTINEL not in raw and SENTINEL not in err, '')
 
 # ---- a failed adapter must not become evidence
@@ -275,6 +303,7 @@ check('the treemap groups by owner and sizes packages too', 'Homebrew formulae' 
 check('an orphan candidate is drawn with its own pattern and listed with its key for tidy',
       'c-orphaned' in doc and g('dotitem', '.terraform.d')['key'].replace('&', '&amp;') in doc, '')
 check('the page says it names things on this machine', 'keep it local' in doc)
+check('the map tooltips and rows carry install dates', 'this version installed' in doc, '')
 # every place a name can land is escaped, including the ones the small fake world never draws (a large block's label, a detail row)
 EVIL = '<img src=x onerror=alert(1)>"\'&'
 tm = htmlmap.treemap([{'group': EVIL, 'name': EVIL, 'kb': 1000, 'cls': 'managed', 'tip': EVIL}])

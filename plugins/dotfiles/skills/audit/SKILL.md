@@ -41,6 +41,7 @@ Start with the **Sources** table. If any source failed, say so before anything e
 - Never recommend removing an unmanaged, unknown, referenced or unattributed item. Only orphan candidates can be offered, and only through `/dotfiles:tidy`.
 - A tool folder can be in use without the tool being installed (a project's `gradlew`, an IDE, `uvx`). That is why recent writes and config references keep a folder out of the orphan list.
 - References are searched in global config only (shell startup files, Claude settings and MCP configs under `~/.claude`, LaunchAgents, cron), not in project folders. An unmanaged command that "no config file mentions" may still be used by a project.
+- Dates say when *this version* arrived: Homebrew's own record, else the creation time of the folder (macOS). A leading `~` means only a modification time was available (Linux has no creation time), so it says when something last changed. Never present a `~` date as an install date. A **stale candidate** flag marks a large item (100 MB or more) that is over a year old, not green and not mentioned anywhere. It is a flag, not a verdict, and it never changes the class.
 - The report names things on this machine. Do not publish it or paste it anywhere shared.
 
 ## Next step

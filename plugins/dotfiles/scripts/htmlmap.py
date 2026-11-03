@@ -6,6 +6,8 @@ is a local file: it says so at the top, and nothing in it is fetched or sent any
 """
 import html
 
+from common import age_text
+
 GLYPH = {'managed': '●', 'owned': '●', 'unmanaged': '◇', 'orphaned': '▲', 'referenced': '◐', 'unknown': '?', 'unattributed': '·', 'config': '–', 'system': '–', 'more': '…'}
 LABEL = {'managed': 'Managed by a package manager', 'owned': 'Folder of an installed tool', 'unmanaged': 'Unmanaged (neutral)',
          'orphaned': 'Orphan candidate', 'referenced': 'Referenced or recently used', 'unknown': 'Unknown', 'unattributed': 'Unattributed',
@@ -67,6 +69,11 @@ def squarify(sizes, x, y, w, h):
     return rects
 
 
+def tip(i):
+    a = age_text(i.get('installed_at'), i.get('date_source'))
+    return '\n'.join(i['evidence']) + (f'\nthis version installed {a}' if a else '')
+
+
 def leaves(rep):
     """Everything with a size, as {group, name, kb, cls, tip}."""
     out = []
@@ -80,17 +87,19 @@ def leaves(rep):
                     cls, extra = 'orphaned', "\nmise says this version is prunable (see the list below)"
                 if p['kind'] == 'formula':
                     extra += '\nrequested by you' if p.get('requested') else '\ninstalled as a dependency'
-                out.append({'group': FORMULA_GROUPS.get(owner, owner), 'name': name, 'kb': p['kb'], 'cls': cls, 'tip': f'{owner} {p["kind"]}{extra}'})
+                a = age_text(p.get('installed_at'), p.get('date_source'))
+                out.append({'group': FORMULA_GROUPS.get(owner, owner), 'name': name, 'kb': p['kb'], 'cls': cls,
+                            'tip': f'{owner} {p["kind"]}{extra}' + (f'\nthis version installed {a}' if a else '')})
     for i in rep['items']:
         if not i.get('kb'):
             continue
         if i['kind'] == 'app':
             key = 'manual' if i['cls'] == 'unmanaged' else i['owner'] if i['owner'] in APP_GROUPS else 'unknown'
-            out.append({'group': APP_GROUPS[key], 'name': i['name'], 'kb': i['kb'], 'cls': i['cls'], 'tip': '\n'.join(i['evidence'])})
+            out.append({'group': APP_GROUPS[key], 'name': i['name'], 'kb': i['kb'], 'cls': i['cls'], 'tip': tip(i)})
         elif i['kind'] == 'dotitem':
-            out.append({'group': DOT_GROUPS.get(i['cls'], 'Other: dot-folders'), 'name': i['name'], 'kb': i['kb'], 'cls': i['cls'], 'tip': '\n'.join(i['evidence'])})
+            out.append({'group': DOT_GROUPS.get(i['cls'], 'Other: dot-folders'), 'name': i['name'], 'kb': i['kb'], 'cls': i['cls'], 'tip': tip(i)})
         elif i['kind'] == 'binary' and i['cls'] == 'unmanaged':
-            out.append({'group': 'Unmanaged commands', 'name': i['name'], 'kb': i['kb'], 'cls': 'unmanaged', 'tip': '\n'.join(i['evidence'])})
+            out.append({'group': 'Unmanaged commands', 'name': i['name'], 'kb': i['kb'], 'cls': 'unmanaged', 'tip': tip(i)})
     return out
 
 
@@ -129,6 +138,8 @@ def rows(items, home, empty):
         ev = ''.join(f'<li>{e(x)}</li>' for x in i['evidence'])
         refs = f'<p><b>Mentioned by:</b> {e(", ".join(i["referenced_by"]))}</p>' if i['referenced_by'] else ''
         flags = f'<p><b>Flags:</b> {e(", ".join(i["flags"]))}</p>' if i['flags'] else ''
+        a = age_text(i.get('installed_at'), i.get('date_source'))
+        flags += f'<p><b>This version installed:</b> {e(a)}</p>' if a else ''
         where = i['path'].replace(home, '~', 1) if i['path'].startswith(home) else (i['path'] or i['name'])
         out.append(f'<details class="it"><summary><span class="sz">{human(i["kb"]) if i.get("kb") else ""}</span>'
                    f'<span class="nm">{e(where)}</span><span class="chip c-{i["cls"]}">{GLYPH[i["cls"]]} {e(i["cls"])}</span></summary>'

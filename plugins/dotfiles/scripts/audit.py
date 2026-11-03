@@ -23,7 +23,7 @@ import argparse, datetime, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adapters, knowledge
-from common import human, sizes, tilde
+from common import human, sizes, tilde, birth, age_text
 from refs import Refs
 
 SYSTEM_PREFIXES = ('/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/libexec', '/System', '/Library/Apple', '/var/run/com.apple',
@@ -51,10 +51,14 @@ def owner_class(owner):
     return 'managed'
 
 
-def item(kind, name, path, owner, cls, evidence, flags=(), kb=None, refs=(), tier=None, suggestions=()):
+STALE_DAYS = 365          # old enough to flag, with the other conditions below
+STALE_KB = 100 * 1024     # and large enough to be worth a look
+
+
+def item(kind, name, path, owner, cls, evidence, flags=(), kb=None, refs=(), tier=None, suggestions=(), installed_at=None, date_source=None):
     return {'key': f'{kind}:{path or name}', 'kind': kind, 'name': name, 'path': path, 'owner': owner, 'cls': cls,
             'evidence': list(evidence), 'flags': list(flags), 'kb': kb, 'referenced_by': list(refs),
-            'tier': tier, 'suggestions': list(suggestions)}
+            'tier': tier, 'suggestions': list(suggestions), 'installed_at': installed_at, 'date_source': date_source}
 
 
 def uncertain_why(results, refs):
@@ -284,7 +288,7 @@ def scan_apps_and_signals(ctx, results, deadline, want_sizes):
         cls = {'brew': 'managed', 'mas': 'managed', 'apple': 'system', 'manual': 'unmanaged'}.get(a['owner'], 'unknown')
         owner = {'manual': 'none'}.get(a['owner'], a['owner'])
         items.append(item('app', a['name'], a['path'], owner, cls, [a['how']] + [s['evidence'] for s in a.get('suggestions', [])], kb=szs.get(a['path']),
-                          tier=a.get('tier'), suggestions=a.get('suggestions', [])))
+                          tier=a.get('tier'), suggestions=a.get('suggestions', []), installed_at=a.get('installed_at'), date_source=a.get('date_source')))
     for name, res in results.items():
         for s in res['signals']:
             items.append(item(s['kind'], s['name'], s['path'], name, 'orphaned', [s['evidence']]))
@@ -311,10 +315,18 @@ def audit(home, path_dirs, app_dirs, max_seconds=90, want_sizes=True, active_day
                 if p.get('path') in szs:
                     p['kb'] = szs[p['path']]
     items = bins + scan_apps_and_signals(ctx, results, deadline, want_sizes) + scan_dots(ctx, results, refs, idx, uncertain, deadline, want_sizes, active_days)
+    now = time.time()
+    for i in items:      # dates for what the adapters did not already date: folders, unmanaged commands, leftovers
+        if i['installed_at'] is None and i['path'] and (i['kind'] in ('dotitem', 'mise-prunable') or (i['kind'] == 'binary' and i['cls'] == 'unmanaged')):
+            i['installed_at'], i['date_source'] = birth(os.path.realpath(i['path']))
+        # a flag, never a verdict: old, large, not green and not mentioned anywhere. Only dates we trust (not a bare mtime).
+        if (i['cls'] in ('unmanaged', 'unattributed', 'orphaned') and (i['kb'] or 0) >= STALE_KB and not i['referenced_by']
+                and i['date_source'] in ('birthtime', 'brew') and i['installed_at'] and now - i['installed_at'] >= STALE_DAYS * 86400):
+            i['flags'].append('stale-candidate')
     inventory = {}
     for res in results.values():
         for p in res['packages']:
-            inventory.setdefault(p['owner'], []).append({k: v for k, v in p.items() if k in ('kind', 'name', 'version', 'requested', 'bundled', 'node', 'bundle_id', 'how', 'path', 'kb')})
+            inventory.setdefault(p['owner'], []).append({k: v for k, v in p.items() if k in ('kind', 'name', 'version', 'requested', 'bundled', 'node', 'bundle_id', 'how', 'path', 'kb', 'installed_at', 'date_source')})
     return {
         'generated': datetime.datetime.now().isoformat(timespec='seconds'), 'home': home, 'seconds': round(time.time() - t0, 1),
         'adapters': [{'name': n, 'status': r['status'], 'detail': r['detail'], 'packages': len(r['packages'])} for n, r in results.items()],
@@ -330,6 +342,11 @@ def rows(items, home, cols):
     for i in items:
         out.append('| ' + ' | '.join(c(i, home) for c in cols) + ' |')
     return out
+
+
+def when(i):
+    t = age_text(i.get('installed_at'), i.get('date_source'))
+    return t + (' (stale candidate)' if 'stale-candidate' in i['flags'] else '')
 
 
 def _name(i, home):
@@ -361,17 +378,17 @@ def render(rep, show_all=False):
     orph = sorted(by('orphaned'), key=lambda i: -(i['kb'] or 0))
     if orph:
         L += ['', f'## Orphan candidates ({len(orph)})', '',
-              'Candidates, not verdicts. `/dotfiles:tidy` prints the commands for the ones you name.', '', '| Key | What | Size | Evidence |', '|---|---|---:|---|']
+              'Candidates, not verdicts. `/dotfiles:tidy` prints the commands for the ones you name.', '', '| Key | What | Size | Installed | Evidence |', '|---|---|---:|---|---|']
         for i in orph:
-            L.append(f"| `{i['key']}` | {_name(i, home)} | {human(i['kb']) if i['kb'] else ''} | {'; '.join(i['evidence'])[:200]} |")
+            L.append(f"| `{i['key']}` | {_name(i, home)} | {human(i['kb']) if i['kb'] else ''} | {when(i)} | {'; '.join(i['evidence'])[:200]} |")
     ref = by('referenced')
     if ref:
         L += ['', f'## Referenced or recently used, but not installed ({len(ref)})', '',
               'Not installed anywhere, yet a config file mentions them or something wrote to them recently. They may still be in use.', '',
-              '| What | Size | Why it is not an orphan |', '|---|---:|---|']
+              '| What | Size | Installed | Why it is not an orphan |', '|---|---:|---|---|']
         for i in sorted(ref, key=lambda i: -(i['kb'] or 0)):
             why = ('mentioned by ' + ', '.join(i['referenced_by'])) if i['referenced_by'] else '; '.join(i['evidence'])[:170]
-            L.append(f"| {_name(i, home)} | {human(i['kb']) if i['kb'] else ''} | {why} |")
+            L.append(f"| {_name(i, home)} | {human(i['kb']) if i['kb'] else ''} | {when(i)} | {why} |")
     frag = [i for i in items if 'fragile' in i['flags']]
     if frag:
         L += ['', f'## Fragile links ({len(frag)})', '', 'Commands that resolve into a cache. A cache cleanup will break them.', '', '| Command | Owner | Evidence |', '|---|---|---|']
@@ -381,11 +398,11 @@ def render(rep, show_all=False):
     if unm_b or unm_a or unm_d:
         L += ['', f'## Unmanaged ({len(unm_b) + len(unm_a) + len(unm_d)})', '', 'Installed, but no package manager claims them. Neutral: this says how they got here, not that they should go.']
     if unm_b:
-        L += ['', '| Command | Size | Used by (config files) |', '|---|---:|---|']
+        L += ['', '| Command | Size | Installed | Used by (config files) |', '|---|---:|---|---|']
         for i in unm_b:
-            L.append(f"| `{tilde(i['path'], home)}` | {human(i['kb'])} | {', '.join(i['referenced_by']) or 'no config file mentions it'} |")
+            L.append(f"| `{tilde(i['path'], home)}` | {human(i['kb'])} | {when(i)} | {', '.join(i['referenced_by']) or 'no config file mentions it'} |")
     if unm_a:
-        L += ['', f"Applications installed by hand ({len(unm_a)}): " + ', '.join(f"{i['name']} ({human(i['kb'])})" + (f" [name match: cask `{i['suggestions'][0]['candidate']}`]" if i['suggestions'] else '')
+        L += ['', f"Applications installed by hand ({len(unm_a)}): " + ', '.join(f"{i['name']} ({human(i['kb'])}{', ' + when(i) if when(i) else ''})" + (f" [name match: cask `{i['suggestions'][0]['candidate']}`]" if i['suggestions'] else '')
                                                                   for i in sorted(unm_a, key=lambda i: -(i['kb'] or 0)))]
     if unm_d:
         L += ['', 'Folders of tools that install themselves: ' + ', '.join(f"`{i['name']}`" for i in unm_d)]
@@ -417,6 +434,7 @@ def render(rep, show_all=False):
             L.append(f"- {label}: {names}")
         L.append('')
     L += ['_References are searched in global config only (shell startup files, Claude settings and MCP configs under ~/.claude, LaunchAgents, cron), not in project folders._',
+          '_Dates: "installed" is when this version arrived: Homebrew\'s own record, else the creation time of the folder. A leading ~ means only a modification time was available (no creation time on this system), so it says when something last changed. "Stale candidate" marks a large item that is old, not green and not mentioned anywhere; it is a flag, not a verdict._',
           f"_{SECRET_SENTINEL_NOTE}; {rep['seconds']}s_"]
     return '\n'.join(L)
 
