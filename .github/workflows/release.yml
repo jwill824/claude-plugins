@@ -30,7 +30,7 @@ jobs:
     outputs:
       list: ${{ steps.find.outputs.list }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: find
         run: |
           list=$(find plugins -mindepth 2 -maxdepth 2 -name .releaserc.json | cut -d/ -f2 | sort | jq -R . | jq -sc .)
@@ -47,7 +47,7 @@ jobs:
         plugin: ${{ fromJson(needs.plugins.outputs.list) }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main   # latest main, so an earlier plugin's release commit is included
           fetch-depth: 0
