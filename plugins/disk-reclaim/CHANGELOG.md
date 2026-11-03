@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/jwill824/claude-plugins/compare/disk-reclaim-v1.0.0...disk-reclaim-v1.0.1) (2026-11-03)
+
+
+### Performance Improvements
+
+* **disk-reclaim:** shorten skill descriptions ([#7](https://github.com/jwill824/claude-plugins/issues/7)) ([acbc760](https://github.com/jwill824/claude-plugins/commit/acbc760444c7e33d2bb2b35b51bd7639cdac22af))
+
 # [1.0.0](https://github.com/jwill824/claude-plugins/compare/disk-reclaim-v0.1.0...disk-reclaim-v1.0.0) (2026-11-02)
 
 
