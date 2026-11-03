@@ -1,14 +1,15 @@
 {
-  "description": "Prints a one-line disk status at session start, only when free space is low. Scans nothing and deletes nothing.",
+  "description": "Shows a one-line disk status at session start. When free space is low it also asks Claude to offer options. Scans nothing and deletes nothing.",
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup",
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/scan_system.py\" --status --quiet-if-ok || true",
-            "timeout": 10
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/scan_system.py\" --status --hook || true",
+            "timeout": 10,
+            "statusMessage": "Checking disk space..."
           }
         ]
       }

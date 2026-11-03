@@ -15,10 +15,10 @@ Automate the cheap parts and keep deletion interactive:
 
 | Layer | Runs | Does |
 |---|---|---|
-| Hook (session start) | `scan_system.py --status --quiet-if-ok` | Prints a line only when something needs attention. Never scan or execute from a hook: it is unattended, runs while other sessions hold caches open, and deletion needs approval. |
+| Hook (session start, resume) | `scan_system.py --status --hook` | Shows you a one-line status (no model cost). Only when space is low does it also give Claude a short note to offer options, never to remove anything. Add `--quiet-if-ok` to show nothing while healthy. Never scan or execute from a hook: it is unattended, runs while other sessions hold caches open, and deletion needs approval. |
 | Schedule (for example weekly, from cron or launchd on the machine itself) | `scan_system.py --json --save-state > "$SCAN"` | Keeps the scan summary fresh so the status is truthful. Read-only. A cloud scheduled agent cannot see the local disk. |
 | Interactive | `/disk-reclaim:system`, then `/disk-reclaim:run` or `/disk-reclaim:review` | Review the tiers, approve items, execute with re-verified gates. |
 
 Do not schedule `--execute`: tiers and gates describe one moment, and a cache that was stale last week may be in use today.
 
-The plugin installs the session-start hook for you (`hooks/hooks.json`, quiet unless space is low). Nothing to configure.
+The plugin installs the session-start hook for you (`hooks/hooks.json`). It shows a one-line status each session and only involves Claude when space is low. Nothing to configure.

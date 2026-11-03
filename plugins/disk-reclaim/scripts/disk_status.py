@@ -84,7 +84,29 @@ def record_history(total, free):
     return rows
 
 
-def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=False):
+def hook_output(free, pct, low, trend, run, problems, source):
+    """The SessionStart hook payload: a one-line summary the user sees (no model cost), plus context for the model only when
+    something needs attention, telling it to offer choices and never to delete on its own."""
+    parts = [f'Disk: {human(free)} free ({pct:.0f}%)' + (' LOW' if low else '')]
+    if trend:
+        parts.append(trend)
+    if run:
+        parts.append(f'last cleanup {ago(run["time"])}')
+    out = {'systemMessage': ' · '.join(parts)}
+    if problems:
+        ctx = (f'Session-start disk check (source: {source or "unknown"}): ' + '; '.join(problems) + '.\n'
+               'Before starting other work, briefly tell the user and use AskUserQuestion to offer options, e.g.:\n'
+               '- see where the space went: /disk-reclaim:system (read-only scan)\n'
+               '- walk the items that need a decision: /disk-reclaim:review\n'
+               '- empty the Trash, if the last cleanup moved items there\n'
+               '- leave it for now\n'
+               'Removal only starts when the user types /disk-reclaim:run or /disk-reclaim:review, so give them the command; do not remove anything yourself. '
+               'If the user\'s first message is an unrelated urgent request, answer it and raise the disk space afterwards.')
+        out['hookSpecificOutput'] = {'hookEventName': 'SessionStart', 'additionalContext': ctx}
+    return out
+
+
+def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=False, hook=False, source=None):
     """Print the status and return an exit code: 0 fine, 1 needs attention.
 
     Only low space needs attention by itself. A missing or old scan is shown, and counts as a problem only when space is
@@ -100,6 +122,7 @@ def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=
     lines.append(f'Disk: {human(free)} free of {human(total)} ({pct:.0f}% free)' + ('  LOW' if low else ''))
 
     now = time.time()
+    trend = None
     old = [r for r in rows if 0.5 * DAY <= now - r[0] <= 14 * DAY]
     if old:
         t0, f0, _ = min(old, key=lambda r: r[0])
@@ -107,7 +130,8 @@ def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=
         d = free - f0
         rate = d / days
         runway = f', about {free / -rate:.0f} days of room at that pace' if rate < -1024 else ''
-        lines.append(f'Trend: {"+" if d >= 0 else "-"}{human(d)} over {days:.1f} days{runway} (net of any cleanups)')
+        trend = f'{"+" if d >= 0 else "-"}{human(d)} over {days:.1f} days'
+        lines.append(f'Trend: {trend}{runway} (net of any cleanups)')
 
     scan = _read('last-scan.json')
     if scan:
@@ -128,6 +152,10 @@ def status(warn_free_gb=50, warn_free_pct=10, max_scan_age_days=14, quiet_if_ok=
                 (f', {human(run["vm_kb"])} removed inside the Colima VM (frees space after fstrim)' if run.get('vm_kb') else '')
     lines.append(f'Last cleanup: {ago(run["time"])}: {run["done"]} item(s), folders shrank by {human(run["du_freed_kb"])}, free space {"+" if run["df_delta_kb"] >= 0 else "-"}{human(run["df_delta_kb"])}{extra}'
                  if run else 'Last cleanup: none recorded')
+    if hook:  # always exit 0: a hook must never fail the session
+        if not (quiet_if_ok and not problems):
+            print(json.dumps(hook_output(free, pct, low, trend, run, problems, source)))
+        return 0
     if not (quiet_if_ok and not problems):
         print('\n'.join(lines))
         if problems:
