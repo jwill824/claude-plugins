@@ -19,6 +19,8 @@ It takes under a minute (most of it is sizing folders). `--all` lists every Home
 
 `--offline` stops Homebrew from refreshing its own name index while the checker searches it. Without it, `brew search` follows Homebrew's own staleness rule (about once a day), which may use the network and rewrites Homebrew's cache, and nothing else; the report's "Adoption candidates" section says whether the index was *refreshed* or *cached*. Tell the user when it was refreshed. `--check NAME` (repeatable) also looks for a manager that offers a name the user types.
 
+The map is interactive but entirely offline: one file, one inline script pinned by hash under a policy (`default-src 'none'`) that blocks every network request, with no data embedded as JSON. In it you can open a group to see every item, click a block for its evidence, filter and search, sort the Homebrew and mise tables, and tick items to copy a `/dotfiles:accept` or `/dotfiles:tidy` command with their keys one per line. Copying changes nothing: the user pastes it, and the skill still confirms.
+
 Open the map locally. It names folders, apps and commands on this machine, so publish it as an Artifact only if the user asks.
 
 ## How to read it

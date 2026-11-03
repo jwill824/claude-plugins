@@ -303,26 +303,35 @@ class Inspect(HTMLParser):
     def __init__(self):
         super().__init__()
         self.tags, self.attrs, self.style, self._in_style = set(), [], '', False
+        self.scripts, self._script, self.order = [], None, []
 
     def handle_starttag(self, tag, attrs):
         self.tags.add(tag)
+        self.order.append((tag, dict(attrs)))
         self.attrs += [(tag, k, v or '') for k, v in attrs]
         self._in_style = tag == 'style'
+        if tag == 'script':
+            self._script = ''
 
     def handle_endtag(self, tag):
         self._in_style = False
+        if tag == 'script' and self._script is not None:
+            self.scripts.append(self._script)
+            self._script = None
 
     def handle_data(self, data):
         if self._in_style:
             self.style += data
+        if self._script is not None:
+            self._script += data
 
 
 ins = Inspect()
 ins.feed(doc)
-bad_tags = ins.tags & {'script', 'link', 'img', 'iframe', 'object', 'embed', 'base', 'form', 'input'}
+bad_tags = ins.tags & {'link', 'img', 'iframe', 'object', 'embed', 'base', 'form', 'video', 'audio', 'source', 'svg'}
 bad_attrs = [(t_, k) for t_, k, v in ins.attrs if k in ('src', 'href', 'srcset', 'action') or k.startswith('on') or 'http' in v.lower()]
-check('the page is self-contained: no scripts, links, images or external resources',
-      not bad_tags and not bad_attrs and 'url(' not in ins.style and '@import' not in ins.style, (bad_tags, bad_attrs))
+check('the page is self-contained: no links, images, frames, forms or external resources, and exactly one script with no src',
+      not bad_tags and not bad_attrs and len(ins.scripts) == 1 and 'url(' not in ins.style and '@import' not in ins.style, (bad_tags, bad_attrs, len(ins.scripts)))
 check('a folder named like markup is escaped everywhere', '<img src=x' not in doc and '&lt;img src=x' in doc, doc.count('<img'))
 check('the page carries no secret', SENTINEL not in doc)
 check('the treemap groups by owner and sizes packages too', 'Homebrew formulae' in doc and 'mise tools' in doc and 'class="t c-' in doc, doc[:200])
@@ -337,6 +346,65 @@ check('a large block escapes its label, tooltip and group caption', '<img' not i
 row = htmlmap.rows([{'path': HOME + '/' + EVIL, 'name': EVIL, 'kb': 5, 'cls': 'orphaned', 'key': 'dotitem:' + EVIL, 'evidence': [EVIL],
                      'referenced_by': [EVIL], 'flags': [EVIL]}], HOME, '')
 check('a detail row escapes path, evidence, references, flags and key', '<img' not in row and row.count('&lt;img src=x') >= 5, row[:300])
+
+
+# ---- interactive map: a strict policy that pins the one script, a script that cannot build markup or reach the network, and a page that still reads without it
+import hashlib, base64, re as _re  # noqa: E402
+import mapjs  # noqa: E402
+
+first_tags = [t for t, _a in ins.order if t not in ('html', 'head')][:2]
+cspm = next((a for t, a in ins.order if t == 'meta' and a.get('http-equiv') == 'Content-Security-Policy'), {'content': '(no policy)'})
+check('the policy meta is the first thing in the head', len(ins.order) > 2 and ins.order[2][1].get('http-equiv') == 'Content-Security-Policy', ins.order[:4])
+digest = 'sha256-' + base64.b64encode(hashlib.sha256(ins.scripts[0].encode('utf-8')).digest()).decode()
+check('the policy is exactly: nothing by default, only this script by its hash, inline styles, no base, no forms',
+      cspm['content'] == f"default-src 'none'; script-src '{digest}'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'", cspm['content'])
+check('the pinned hash is the hash of the script text that is actually in the page', digest in cspm['content'] and ins.scripts[0] == mapjs.SCRIPT, '')
+check('the script has no src and the page has no inline event handlers or javascript: links',
+      not any(k == 'src' for t_, k, v in ins.attrs if t_ == 'script') and not any(k.startswith('on') for _t, k, _v in ins.attrs) and not any('javascript:' in v for _t, _k, v in ins.attrs), '')
+hits = [f for f in mapjs.FORBIDDEN if f in mapjs.SCRIPT]
+check('the script contains nothing that builds markup from text, loads code, stores data or reaches a network', not hits, hits)
+check('the script never builds markup: it writes text, moves existing nodes, and clones the pre-rendered detail', 'textContent' in mapjs.SCRIPT and 'cloneNode' in mapjs.SCRIPT and not _re.search(r'\bnew\s+Function\b|\.html\s*=', mapjs.SCRIPT), '')
+check('copied commands put one key per line, never on a shared shell line', "Array.from(selected.keys()).join('\\n')" in mapjs.SCRIPT and ".join(' ')" not in mapjs.SCRIPT and "command + '\\n' +" in mapjs.SCRIPT, '')
+check('tidy can only be copied when every selected item is an orphan candidate', "if (cls !== 'orphaned') { allOrphans = false; }" in mapjs.SCRIPT and 'bTidy.disabled = !allOrphans' in mapjs.SCRIPT, '')
+check('there is no data blob: no JSON script, and none of the report is embedded as JSON', 'application/json' not in doc and '"cls":' not in doc and '"installed_at"' not in doc, '')
+check('the policy builder pins whatever script it is given (change the script, the hash changes)', mapjs.csp('x') != mapjs.csp('y') and mapjs.script_hash('x') in mapjs.csp('x'), '')
+check('every control the page needs from scripts is hidden until the script runs', [a for t_, a in ins.order if 'data-js' in a] and all('hidden' in a for t_, a in ins.order if 'data-js' in a), [a for t_, a in ins.order if 'data-js' in a and 'hidden' not in a][:2])
+check('detail blocks, group views, the selection bar and the copy box start hidden; the overview does not', all(
+      any(a.get('id') == i_ and 'hidden' in a for t_, a in ins.order) for i_ in ('dstore', 'selbar', 'copybox', 'detail', 'crumbs'))
+      and not any(a.get('id') == 'tm-overview' and 'hidden' in a for t_, a in ins.order), '')
+groups_hidden = [a for t_, a in ins.order if t_ == 'div' and 'data-g' in a]
+check('every group has a complete hidden layout of its own', groups_hidden and all('hidden' in a for a in groups_hidden) and len(groups_hidden) >= 4, len(groups_hidden))
+ov = doc[doc.index('id="tm-overview"'):doc.index('id="detail"')]
+n_over = ov.count('data-n="')
+check('the overview blocks all have a pre-rendered detail block, and nothing else points nowhere',
+      all(f'data-d="{m}"' in doc for m in _re.findall(r'data-n="(n\d+)"', doc)) and n_over > 5, n_over)
+check('the manager tables are present in the page itself, not built by the script', 'What each manager has installed' in doc and '<table class="sortable">' in doc and 'Homebrew (' in doc and 'mise (' in doc, '')
+check('a table header sorts by a real button', _re.search(r'<th><button type="button" data-type="num">Size</button></th>', doc) is not None, '')
+check('list rows carry a select box (shown by the script) and the key, and the filter attributes', 'class="pick" data-js hidden' in doc and 'data-acc="0"' in doc and 'aria-pressed="false"' in doc, '')
+# hostile input, everywhere it can land
+EV2 = '<img src=x onerror=alert(1)>"\'&</script><script>alert(2)</script>'
+lv_h = [{'group': EV2, 'name': EV2, 'kb': 5000, 'cls': 'orphaned', 'tip': EV2, 'key': 'dotitem:' + EV2, 'acc': True, 'id': 'n0', 'body': htmlmap.item_inner(
+        {'key': 'dotitem:' + EV2, 'name': EV2, 'cls': 'orphaned', 'kind': 'dotitem', 'path': HOME + '/' + EV2, 'evidence': [EV2], 'referenced_by': [EV2], 'flags': [EV2],
+         'suggestions': [{'candidate': EV2, 'command': EV2, 'evidence': EV2}], 'accepted': {'date': EV2, 'note': EV2}, 'acceptance_void': None, 'installed_at': None, 'date_source': None}, {})}]
+hostile = htmlmap.treemap(lv_h) + htmlmap.group_views(lv_h) + lv_h[0]['body'] + htmlmap.select_button('dotitem:' + EV2, EV2)
+hostile += htmlmap.rows([{'key': 'dotitem:' + EV2, 'name': EV2, 'cls': 'orphaned', 'kind': 'dotitem', 'path': HOME + '/' + EV2, 'kb': 3, 'evidence': [EV2], 'referenced_by': [EV2], 'flags': [EV2],
+                         'suggestions': [], 'accepted': {'date': EV2, 'note': EV2}}], HOME, '')
+hostile += htmlmap.manager_panels({'items': [], 'duplicates': [], 'inventory': {EV2: [{'kind': EV2, 'name': EV2, 'version': EV2, 'kb': 3, 'installed_at': 1, 'date_source': 'brew'}]}})
+ih = Inspect()
+ih.feed(hostile)
+check('hostile text (names, keys, notes, suggestions, owners) is escaped in blocks, group views, details, rows, buttons and tables',
+      '<img' not in hostile and '<script' not in hostile and not ih.scripts and not any(k.startswith('on') for _t, k, _v in ih.attrs) and hostile.count('&lt;img src=x') >= 8, (hostile.count('&lt;img src=x'), ih.tags))
+check('a key with a control character gets no select box and no select button',
+      'class="pick"' not in htmlmap.rows([{'key': 'dotitem:a\nb', 'name': 'a', 'cls': 'orphaned', 'kind': 'dotitem', 'path': '', 'kb': 1, 'evidence': [], 'referenced_by': [], 'flags': [], 'suggestions': []}], HOME, '')
+      and 'class="sel"' not in htmlmap.select_button('dotitem:a\nb', 'orphaned') and 'control characters' in htmlmap.select_button('dotitem:a\nb', 'orphaned'), '')
+check('accepted items are marked by a glyph and an outline, not by colour alone', '✓' in doc and 'acc-sw' in doc and '.t.acc' in ins.style, '')
+if shutil.which('node'):
+    js_path = os.path.join(ROOT, 'map.js')
+    open(js_path, 'w').write(ins.scripts[0])
+    r_ = subprocess.run(['node', '--check', js_path], capture_output=True, text=True)
+    check('the script is valid JavaScript (node --check)', r_.returncode == 0, r_.stderr[:300])
+else:
+    print('SKIP  node is not installed, so the script was not syntax-checked here')
 
 sizes_in = [(10, 'a'), (6, 'b'), (4, 'c'), (2, 'd'), (1, 'e')]
 rects = htmlmap.squarify([s for s, _ in sizes_in], 0, 0, 100, 100)
