@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.7.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.6.0...dotfiles-v0.7.0) (2026-11-03)
+
+
+### Features
+
+* **dotfiles:** mark an item accepted and count what is unresolved ([#19](https://github.com/jwill824/claude-plugins/issues/19)) ([b5e0e31](https://github.com/jwill824/claude-plugins/commit/b5e0e31d23d1bdd9c5e17298934459e9065c6508))
+
 # [0.6.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.5.0...dotfiles-v0.6.0) (2026-11-03)
 
 
