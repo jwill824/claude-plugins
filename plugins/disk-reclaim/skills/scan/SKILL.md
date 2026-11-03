@@ -1,6 +1,6 @@
 ---
 name: scan
-description: Report how much storage a directory or project folder uses, break it down by folder and by category, and work out which of it can be safely reclaimed (build output, node_modules, caches, logs, git worktrees). Use when the user asks why a project or folder is huge, how big node_modules or build output has grown, how to clean up a directory, or whether something in it is safe to delete. Read-only by default; it never deletes without explicit confirmation. Git-aware: it will not suggest removing tracked files, uncommitted changes or unpushed commits. For the whole machine (System Data, Docker, simulators), use /disk-reclaim:system instead.
+description: Break down how much space a project folder or directory uses and which of it can be safely reclaimed (node_modules, build output, caches, logs, git worktrees). Use when asked why a folder or project is huge, how to free up space in it, or whether something in it is safe to delete. Read-only; never deletes without confirmation; git-aware. For the whole machine, use /disk-reclaim:system.
 argument-hint: "[DIR]"
 ---
 

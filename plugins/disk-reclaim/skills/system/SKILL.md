@@ -1,6 +1,6 @@
 ---
 name: system
-description: Scan the whole machine for storage outside any project folder: tool caches, Xcode and simulators, Android emulators, Docker or Colima volumes and images, app caches, and Claude working data. Use when the user asks why the whole disk or volume is full, what the System Data, Docker or simulator space is, or runs /disk-reclaim:system. Read-only: it tiers each item (SAFE, VERIFY, KEEP), marks it in use or stale, and can write an HTML treemap. macOS only.
+description: Scan the whole machine for space outside project folders: tool caches, Xcode simulators, Android emulators, Docker or Colima volumes, app caches. Use when asked why the whole disk is full or what System Data or Docker space is. Read-only; tiers each item SAFE, VERIFY or KEEP. macOS only.
 argument-hint: "[--html FILE] [--save-state]"
 ---
 
