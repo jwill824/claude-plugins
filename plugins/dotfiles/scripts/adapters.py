@@ -38,7 +38,7 @@ def brew(ctx, prior):
     for f in data.get('formulae') or []:
         inst = f.get('installed') or []
         packages.append({'owner': 'brew', 'kind': 'formula', 'name': f.get('name', ''), 'version': (inst[-1].get('version', '') if inst else ''),
-                         'requested': any(i.get('installed_on_request') for i in inst)})
+                         'requested': any(i.get('installed_on_request') for i in inst), 'path': os.path.join(prefix, 'Cellar', f.get('name', ''))})
     for c in data.get('casks') or []:
         apps = [a for art in (c.get('artifacts') or []) if isinstance(art, dict) for a in (art.get('app') or []) if isinstance(a, str)]
         token = c.get('token') or c.get('full_token') or ''
@@ -142,7 +142,7 @@ def npm(ctx, prior):
                     ver = json.load(open(os.path.join(d, 'package.json'))).get('version', '')
                 except (OSError, ValueError):
                     pass
-                packages.append({'owner': 'npm', 'kind': 'package', 'name': name, 'version': ver, 'node': label, 'bundled': name in ('npm', 'corepack')})
+                packages.append({'owner': 'npm', 'kind': 'package', 'name': name, 'version': ver, 'node': label, 'bundled': name in ('npm', 'corepack'), 'path': d})
     return result('npm', 'failed' if warnings and not packages else 'ok', '; '.join(warnings), packages, roots)
 
 
@@ -160,7 +160,7 @@ def uv(ctx, prior):
     for line in listing.splitlines():
         m = re.match(r'^(\S+) v(\S+)', line)
         if m and not line.startswith('-'):
-            cur = {'owner': 'uv', 'kind': 'tool', 'name': m.group(1), 'version': m.group(2), 'exes': []}
+            cur = {'owner': 'uv', 'kind': 'tool', 'name': m.group(1), 'version': m.group(2), 'exes': [], 'path': os.path.join(tool_dir, m.group(1))}
             packages.append(cur)
         elif line.startswith('- ') and cur is not None:
             cur['exes'].append(line[2:].strip())
@@ -214,7 +214,8 @@ def rustup(ctx, prior):
         return result('rustup', 'missing', 'rustup is not installed')
     if st != 'ok':
         return result('rustup', 'failed', out)
-    packages = [{'owner': 'rustup', 'kind': 'toolchain', 'name': l.split()[0], 'version': ''} for l in out.splitlines() if l.strip() and not l.startswith('no ')]
+    packages = [{'owner': 'rustup', 'kind': 'toolchain', 'name': l.split()[0], 'version': '', 'path': os.path.join(root, 'toolchains', l.split()[0])}
+                for l in out.splitlines() if l.strip() and not l.startswith('no ')]
     return result('rustup', 'ok', '', packages, roots=[{'prefix': root, 'owner': 'rustup'}])
 
 

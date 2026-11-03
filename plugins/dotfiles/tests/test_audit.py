@@ -19,6 +19,7 @@ HOME = os.path.join(ROOT, 'home')
 FAKEBIN = os.path.join(ROOT, 'fakebin')
 LOG = os.path.join(ROOT, 'cmd.log')
 SENTINEL = 'SENTINEL-SECRET-4f8a1c'
+HOSTILE = '.<img src=x onerror=alert(1)>'
 DAY = 86400
 FAILS = []
 
@@ -92,7 +93,7 @@ esac''')
     fake('rustup', 'echo "stable-x (default)"')
     fake('crontab', 'echo "no crontab for user" >&2; exit 1')
     # brew-owned command: a link from bin into the Cellar
-    write(os.path.join(prefix, 'Cellar/foo/1.0/bin/foo'), '', 0o755)
+    write(os.path.join(prefix, 'Cellar/foo/1.0/bin/foo'), 'x' * 20000, 0o755)
     os.makedirs(os.path.join(prefix, 'bin'))
     os.symlink('../Cellar/foo/1.0/bin/foo', os.path.join(prefix, 'bin/foo'))
     write(os.path.join(prefix, 'bin/brew'), '', 0o755)
@@ -127,6 +128,7 @@ esac''')
     write(os.path.join(HOME, '.cocoapods/repos/x'), 'old')                # cocoapods formula installed -> owned
     age_tree(os.path.join(HOME, '.cocoapods'), 200)
     write(os.path.join(HOME, '.mystery-dir/x'), 'unknown to the table')
+    write(os.path.join(HOME, HOSTILE, 'x'), 'a folder whose name is markup')
     write(os.path.join(HOME, '.oh-my-zsh/x'), 'self-installed')
     write(os.path.join(HOME, '.ssh/config'), f'Host x\n  IdentityFile ~/.ssh/id # {SENTINEL}\n')
     write(os.path.join(HOME, '.npmrc'), f'//registry.npmjs.org/:_authToken={SENTINEL}\n')
@@ -215,6 +217,61 @@ check('and an orphan folder becomes unknown, not orphaned', by_name(rep2, 'dotit
 check("a manager's own verdict is still reported", by_name(rep2, 'mise-prunable', 'jq@1.0.0')['cls'] == 'orphaned')
 rc, md2, _ = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--no-sizes', FAKE_UV_FAIL='1')
 check('the report says so, in a header', 'could not be read' in md2 and 'uv' in md2, md2[:400])
+
+# ---- the HTML map: self-contained, escaped, no secrets, sound layout
+import htmlmap  # noqa: E402
+
+page = os.path.join(ROOT, 'map.html')
+rc, out, err = sh('audit.py', '--home', HOME, '--apps-dir', os.path.join(HOME, 'Applications'), '--html', page, '--json')
+check('--html writes the page and still prints valid JSON', rc == 0 and os.path.exists(page) and json.loads(out) and 'wrote the map' in err, err[:200])
+doc = open(page).read() if os.path.exists(page) else ''
+from html.parser import HTMLParser  # noqa: E402
+
+
+class Inspect(HTMLParser):
+    """What the page really contains: its tags, their attributes, and its stylesheet text. Escaped text is just text."""
+    def __init__(self):
+        super().__init__()
+        self.tags, self.attrs, self.style, self._in_style = set(), [], '', False
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag)
+        self.attrs += [(tag, k, v or '') for k, v in attrs]
+        self._in_style = tag == 'style'
+
+    def handle_endtag(self, tag):
+        self._in_style = False
+
+    def handle_data(self, data):
+        if self._in_style:
+            self.style += data
+
+
+ins = Inspect()
+ins.feed(doc)
+bad_tags = ins.tags & {'script', 'link', 'img', 'iframe', 'object', 'embed', 'base', 'form', 'input'}
+bad_attrs = [(t_, k) for t_, k, v in ins.attrs if k in ('src', 'href', 'srcset', 'action') or k.startswith('on') or 'http' in v.lower()]
+check('the page is self-contained: no scripts, links, images or external resources',
+      not bad_tags and not bad_attrs and 'url(' not in ins.style and '@import' not in ins.style, (bad_tags, bad_attrs))
+check('a folder named like markup is escaped everywhere', '<img src=x' not in doc and '&lt;img src=x' in doc, doc.count('<img'))
+check('the page carries no secret', SENTINEL not in doc)
+check('the treemap groups by owner and sizes packages too', 'Homebrew formulae' in doc and 'mise tools' in doc and 'class="t c-' in doc, doc[:200])
+check('an orphan candidate is drawn with its own pattern and listed with its key for tidy',
+      'c-orphaned' in doc and g('dotitem', '.terraform.d')['key'].replace('&', '&amp;') in doc, '')
+check('the page says it names things on this machine', 'keep it local' in doc)
+# every place a name can land is escaped, including the ones the small fake world never draws (a large block's label, a detail row)
+EVIL = '<img src=x onerror=alert(1)>"\'&'
+tm = htmlmap.treemap([{'group': EVIL, 'name': EVIL, 'kb': 1000, 'cls': 'managed', 'tip': EVIL}])
+check('a large block escapes its label, tooltip and group caption', '<img' not in tm and tm.count('&lt;img src=x') >= 3, tm[:300])
+row = htmlmap.rows([{'path': HOME + '/' + EVIL, 'name': EVIL, 'kb': 5, 'cls': 'orphaned', 'key': 'dotitem:' + EVIL, 'evidence': [EVIL],
+                     'referenced_by': [EVIL], 'flags': [EVIL]}], HOME, '')
+check('a detail row escapes path, evidence, references, flags and key', '<img' not in row and row.count('&lt;img src=x') >= 5, row[:300])
+
+sizes_in = [(10, 'a'), (6, 'b'), (4, 'c'), (2, 'd'), (1, 'e')]
+rects = htmlmap.squarify([s for s, _ in sizes_in], 0, 0, 100, 100)
+area = [w * h for (_x, _y, w, h) in rects]
+check('treemap rects fill the box and stay inside it', abs(sum(area) - 10000) < 1e-6 and all(x >= -1e-9 and y >= -1e-9 and x + w <= 100 + 1e-9 and y + h <= 100 + 1e-9 for (x, y, w, h) in rects), rects)
+check('treemap areas are proportional to sizes', all(abs(a / 10000 - s / 23) < 1e-9 for a, (s, _) in zip(area, sizes_in)), area)
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
