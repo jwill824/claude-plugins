@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.11.0...dotfiles-v0.11.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **dotfiles:** stop holding folders for source files and package test fixtures ([#26](https://github.com/jwill824/claude-plugins/issues/26)) ([9887b71](https://github.com/jwill824/claude-plugins/commit/9887b7193d81a0b057f730507ae9529b2d57fc31))
+
 # [0.11.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.10.2...dotfiles-v0.11.0) (2026-11-04)
 
 
