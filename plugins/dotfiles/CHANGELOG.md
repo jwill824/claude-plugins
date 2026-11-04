@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.10.1...dotfiles-v0.10.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **dotfiles:** open the map in cmux when the user asks for it ([#24](https://github.com/jwill824/claude-plugins/issues/24)) ([30244ff](https://github.com/jwill824/claude-plugins/commit/30244ffe7888f32b63b393dee892deda4cd71c5e))
+
 ## [0.10.1](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.10.0...dotfiles-v0.10.1) (2026-11-03)
 
 
