@@ -94,6 +94,21 @@ _ENTRIES = [
     E('.cache/nvim', 'Neovim', 'cache', 'nvim'), E('.cache/uv', 'uv', 'cache', 'uv'), E('.cache/pre-commit', 'pre-commit', 'cache', 'pre-commit'),
     E('.cache/huggingface', 'Hugging Face', 'cache', 'huggingface-cli', 'hf', 'huggingface_hub'), E('.cache/gh', 'GitHub CLI', 'cache', 'gh'),
     E('.cache/act', 'act', 'cache', 'act'), E('.cache/codex-runtimes', 'Codex CLI', 'cache', 'codex', 'openai/codex'),
+    # more public tools. A folder that can hold credentials is kept (listed, never offered); the rest are owned while the tool is installed
+    E('.config/gcloud', 'Google Cloud CLI', 'secrets', keep=True), E('.config/github-copilot', 'GitHub Copilot', 'secrets', keep=True),
+    E('.context7', 'Context7 CLI', 'secrets', keep=True), E('.ccs', 'CCS', 'secrets', keep=True),
+    E('.local/state/lesshst', 'less', 'state', keep=True), E('.local/state/dotfiles', 'dotfiles plugin', 'state', keep=True),
+    E('.config/raycast', 'Raycast', 'config', 'raycast'),
+    E('.local/share/gh', 'GitHub CLI', 'tool-home', 'gh'), E('.local/state/gh', 'GitHub CLI', 'state', 'gh'),
+    E('.config/direnv', 'direnv', 'config', 'direnv'), E('.local/share/direnv', 'direnv', 'tool-home', 'direnv'),
+    E('.config/lnav', 'lnav', 'config', 'lnav'),
+    E('.config/powershell', 'PowerShell', 'config', 'pwsh', 'powershell'), E('.local/share/powershell', 'PowerShell', 'tool-home', 'pwsh', 'powershell'),
+    E('.cache/powershell', 'PowerShell', 'cache', 'pwsh', 'powershell'),
+    E('.config/fresh', 'Fresh', 'config', 'fresh', 'fresh-editor'), E('.local/state/fresh', 'Fresh', 'state', 'fresh', 'fresh-editor'),
+    E('.cache/helix', 'Helix', 'cache', 'hx', 'helix'), E('.cache/tree-sitter', 'tree-sitter', 'cache', 'tree-sitter'),
+    E('.local/state/pnpm', 'pnpm', 'state', 'pnpm'), E('.bun', 'Bun', 'tool-home', 'bun'), E('.cache/actcache', 'act', 'cache', 'act'),
+    E('.config/openspec', 'OpenSpec', 'config', 'openspec', '@fission-ai/openspec'),
+    E('.config/cmux', 'cmux', 'config', 'cmux'), E('.local/state/cmux', 'cmux', 'state', 'cmux'),
 ]
 
 _EXACT = {e.path: e for e in _ENTRIES if not e.prefix}
