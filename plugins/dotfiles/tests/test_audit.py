@@ -764,6 +764,35 @@ check('a folder holding a file named like a key is held, by name only', 'possibl
 os.unlink(os.path.join(HOME, '.sts4/id_rsa'))
 check('a name like tokenizer is not mistaken for a credential, and a .pem is', not fix.KEY_NAMES.match('tokenizer') and not fix.KEY_NAMES.match('environment.js') and fix.KEY_NAMES.match('x.pem')
       and fix.KEY_NAMES.match('.env.local') and fix.KEY_NAMES.match('id_ed25519') and fix.KEY_NAMES.match('token.json'), '')
+# what is not a key although its name looks like one: narrow rules, each with the near miss that still holds
+KM = os.path.join(ROOT, 'keymat')
+
+
+def km(*files, links=(), dirs=()):
+    shutil.rmtree(KM, ignore_errors=True)
+    os.makedirs(KM)
+    for f in files:
+        write(os.path.join(KM, f), 'x')
+    for d in dirs:
+        os.makedirs(os.path.join(KM, d))
+    for name, target in links:
+        os.symlink(target, os.path.join(KM, name))
+    return fix.key_material(KM)
+
+
+check('source files named like a token or credentials are code, not keys', km('a/tokens.pyi', 'b/token.py', 'c/credentials.pyi', 'd/.token.js', 'e/credentials.ts') is None, km('a/tokens.pyi'))
+check('the same names with a data extension still hold', all(km(f) and 'possible key material' in km(f) for f in ('credentials.json', 'token.json', 'tokens.yaml', '.env.py', 'tokens', 'credentials')), '')
+check('a folder named like a credential is a container: empty it holds nothing, but its files are judged by their own names',
+      km(dirs=['docker/credentials']) is None and km('docker/credentials/id_rsa') and 'id_rsa' in km('docker/credentials/id_rsa'), '')
+check('a link named like a credential is still judged by its name, even when it points at a folder', km(links=[('credentials', ROOT)]) is not None, km(links=[('credentials', ROOT)]))
+check('a .pem or .key in a test folder of an installed package is a fixture',
+      km('node_modules/p/test/test_key.pem', 'node_modules/@s/q/fixtures/x.key', 'x/site-packages/r/tests/y.pem', 'node_modules/p/node_modules/q/__tests__/z.pem') is None, km('node_modules/p/test/test_key.pem'))
+check('the same files outside a package, or outside a test folder, still hold',
+      all(km(f) and 'possible key material' in km(f) for f in ('test/test_key.pem', 'key.pem', 'node_modules/p/key.pem', 'node_modules/p/src/key.pem', 'tests/node_modules/p/x.pem')), [km(f) for f in ('test/test_key.pem', 'node_modules/p/src/key.pem')])
+check('a package fixture does not excuse a private key name or another kind of secret file in the same folder',
+      all(km('node_modules/p/test/' + n) and 'possible key material' in km('node_modules/p/test/' + n) for n in ('id_rsa', 'id_ed25519', 'x.p12', 'vault.kdbx', '.env', 'credentials.json')), '')
+check('one real hit among fixtures and code still holds the whole folder', 'id_rsa' in (km('node_modules/p/test/a.pem', 'src/tokens.py', 'home/id_rsa') or ''), km('home/id_rsa'))
+shutil.rmtree(KM, ignore_errors=True)
 os.utime(os.path.join(HOME, '.sts4'), (time.time() - 200 * DAY,) * 2)
 o = dry(ST, FAKE_LSOF_HOLD='1')
 check('a folder something has open is held', 'in use: process 4242' in o and 'Nothing can be moved' in o, o)
@@ -782,6 +811,12 @@ write(os.path.join(outside, 'f'), 'x', age_days=200)
 try:
     why = lambda i, c=None: fix.check_item(i, c or ctx0)
     check('the home folder itself is never moved', 'outside your home folder' in (why(mk(HOME)) or ''), why(mk(HOME)))
+    write(os.path.join(HOME, 'loose-files/id_rsa'), 'x', age_days=200)
+    write(os.path.join(HOME, 'loose-files/tokens.py'), 'x', age_days=200)
+    check('a single file named like a key is held, and a source file named like a token is not (same rules as inside a folder)',
+          'possible key material' in (why(mk(os.path.join(HOME, 'loose-files/id_rsa'))) or '') and why(mk(os.path.join(HOME, 'loose-files/tokens.py'))) is None,
+          (why(mk(os.path.join(HOME, 'loose-files/id_rsa'))), why(mk(os.path.join(HOME, 'loose-files/tokens.py')))))
+    shutil.rmtree(os.path.join(HOME, 'loose-files'))
     check('something outside the home folder is held, with a pointer to tidy', 'outside your home folder' in (why(mk(outside)) or '') and '/dotfiles:tidy' in why(mk(outside)), why(mk(outside)))
     os.makedirs(os.path.join(HOME, '.Trash-test'), exist_ok=True)
     ctx_t = dict(ctx0, trash=os.path.join(HOME, '.Trash-test'))

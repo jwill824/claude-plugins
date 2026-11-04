@@ -30,6 +30,6 @@ This is the only skill that changes anything on disk besides the accepted-state 
 
 ## Notes
 
-- A held item names its gate: not an orphan any more, accepted, written to recently, mentioned by a config file now, in use (`lsof`), possible key material (a file name only, never contents), outside the home folder, on another volume, or not writable.
+- A held item names its gate: not an orphan any more, accepted, written to recently, mentioned by a config file now, in use (`lsof`), possible key material (a file name only, never contents; source files such as `tokens.pyi`, folders that merely have a credential-like name, and `.pem` or `.key` test fixtures inside an installed package's `test` folder do not count, every other key-like name still holds the item), outside the home folder, on another volume, or not writable.
 - The log is `fix-log.jsonl` next to the accepted-state file.
 - Provided as is, without warranty (MIT licence).
