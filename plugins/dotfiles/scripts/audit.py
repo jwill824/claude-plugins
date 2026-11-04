@@ -19,7 +19,7 @@ Classes:
 
     python3 audit.py [--json] [--save FILE] [--html FILE] [--all] [--home DIR] [--apps-dir DIR ...] [--max-seconds N]
 """
-import argparse, datetime, json, os, re, sys, time
+import argparse, datetime, errno, json, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accepted, adapters, checker, common, identity, knowledge
@@ -137,7 +137,8 @@ def scan_bins(ctx, results, refs, uncertain):
             try:
                 hops = chain(p)
             except OSError as e:
-                items.append(item('binary', n, p, 'unknown', 'unknown', [f'could not read the link ({e.strerror}); ownership cannot be ruled out'], flags))
+                why = f'{e.strerror}: needs admin rights to read' if e.errno in (errno.EACCES, errno.EPERM) else e.strerror
+                items.append(item('binary', n, p, 'unknown', 'unknown', [f'could not read the link ({why}); ownership cannot be ruled out'], flags))
                 continue
             owner, ev = None, []
             if shims and os.path.dirname(p) == shims:

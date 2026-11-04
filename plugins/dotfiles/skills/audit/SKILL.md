@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break, and can write an HTML map of it. Read-only, except that the checker may let Homebrew refresh its own name index (`--offline` forbids it). Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
+description: Audit what is installed on this machine and who owns it: Homebrew, mise, npm, pnpm, uv and cargo installs, applications, commands on PATH, and dotfiles. Reports what no package manager claims, leftovers whose tool is gone (orphan candidates, with evidence) and links that will break, and can write an HTML map of it. Read-only, except that the checker may let Homebrew refresh its own name index (`--offline` forbids it). Use when asked what is installed, which tools or dotfiles are lying around, or what could be cleaned up.
 argument-hint: "[--html FILE] [--cmux] [--all] [--json] [--offline] [--check NAME]"
 ---
 

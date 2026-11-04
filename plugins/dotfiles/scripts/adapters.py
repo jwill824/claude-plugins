@@ -343,12 +343,73 @@ def apps(ctx, prior):
     return result('apps', 'ok', '; '.join(warnings), packages, roots)
 
 
+PNPM_NAME = re.compile(r'^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$')   # a package name, never a path
+
+
+def pnpm_home(ctx):
+    """pnpm's own folder: $PNPM_HOME when it is an absolute folder the audit already trusts (under home, or on PATH), else the
+    places pnpm uses by default. The first that exists wins."""
+    env = os.environ.get('PNPM_HOME', '')
+    trusted = [os.path.realpath(d) for d in ctx.path_dirs] + [os.path.realpath(ctx.home)]
+    found = []
+    if env and os.path.isabs(env) and os.path.isdir(env) and any(os.path.realpath(env) == t or os.path.realpath(env).startswith(t.rstrip(os.sep) + os.sep) for t in trusted):
+        found.append(env)
+    xdg = os.environ.get('XDG_DATA_HOME', '')
+    found += [os.path.join(ctx.home, 'Library', 'pnpm')] + ([os.path.join(xdg, 'pnpm')] if xdg and os.path.isabs(xdg) else []) + [os.path.join(ctx.home, '.local', 'share', 'pnpm')]
+    return next((d for d in found if os.path.isdir(d)), None)
+
+
+def pnpm(ctx, prior):
+    """pnpm's global packages, read from its folder (no pnpm command is run: `pnpm ls -g` fails when its bin folder is not on PATH).
+    A shim in pnpm's folder is owned only when a global package's own `bin` names it; the shim is a text file and is never opened."""
+    home = pnpm_home(ctx)
+    if home is None:
+        return result('pnpm', 'missing', 'pnpm has no global folder here')
+    packages, claims, warnings, read = [], {}, [], 0
+    gdir = os.path.join(home, 'global')
+    projects = sorted(d for d in (os.listdir(gdir) if os.path.isdir(gdir) else []) if d.isdigit() and os.path.isdir(os.path.join(gdir, d)))
+    for d in projects:
+        proj = os.path.join(gdir, d)
+        try:
+            deps = json.load(open(os.path.join(proj, 'package.json'))).get('dependencies') or {}
+            if not isinstance(deps, dict):
+                raise ValueError('dependencies is not a map')
+        except (OSError, ValueError) as e:
+            warnings.append(f'{proj}/package.json: {type(e).__name__}')
+            continue
+        for name in sorted(deps):
+            if not PNPM_NAME.match(name):
+                warnings.append(f'{proj}: ignored a dependency name that is not a package name')
+                continue
+            pkg_dir = os.path.join(proj, 'node_modules', name)
+            try:
+                meta = json.load(open(os.path.join(pkg_dir, 'package.json')))
+                if not isinstance(meta, dict):
+                    raise ValueError('not a map')
+            except (OSError, ValueError) as e:
+                warnings.append(f'{name}: could not read its package.json ({type(e).__name__})')
+                continue
+            read += 1
+            bins = meta.get('bin')
+            if isinstance(bins, str):
+                bins = {name.split('/')[-1]: bins}
+            bins = [b for b in (bins if isinstance(bins, dict) else {}) if isinstance(b, str) and b and '/' not in b and not b.startswith('.') and '\0' not in b]
+            ver = meta.get('version') if isinstance(meta.get('version'), str) else ''
+            t, src = birth(pkg_dir)
+            packages.append({'owner': 'pnpm', 'kind': 'package', 'name': name, 'version': ver, 'bins': bins, 'path': pkg_dir, 'installed_at': t, 'date_source': src})
+            for b in bins:
+                claims[os.path.join(home, b)] = ('pnpm', f'pnpm global package {name} installs {b}')
+    roots = [{'prefix': r, 'owner': 'pnpm'} for r in (gdir, os.path.join(home, 'store')) if os.path.isdir(r)]
+    status = 'failed' if warnings else 'ok'   # one package we could not read means we cannot rule out who owns its shims
+    return result('pnpm', status, '; '.join(warnings), packages, roots, claims)
+
+
 # Order matters: later adapters read what earlier ones found.
-ORDER = (brew, mise, npm, uv, cargo, rustup, mas, apps)
+ORDER = (brew, mise, npm, pnpm, uv, cargo, rustup, mas, apps)
 # Managers whose folders we recognise but do not read yet. Anything that resolves into them is "unknown", never "unmanaged".
 NOT_COVERED = {'pipx': ('/pipx/',), 'gem': ('/.gem/', '/.local/share/gem/'), 'go': ('/go/bin/',), 'bun': ('/.bun/',), 'deno': ('/.deno/',),
                'pyenv': ('/.pyenv/',), 'rbenv': ('/.rbenv/',), 'asdf': ('/.asdf/',), 'nvm': ('/.nvm/',), 'vfox': ('/.vfox/',),
-               'sdkman': ('/.sdkman/',), 'pnpm': ('/pnpm/', '/.pnpm')}
+               'sdkman': ('/.sdkman/',)}
 
 
 def collect(ctx):

@@ -177,6 +177,8 @@ def env(**extra):
     e['DOTFILES_STATE'] = STATE   # never the developer's real accepted-state file
     for k_ in [k_ for k_ in e if k_.startswith('CMUX_')]:   # a developer's own cmux session must not decide what "outside cmux" means
         del e[k_]
+    for k_ in ('PNPM_HOME', 'XDG_DATA_HOME'):   # where pnpm keeps its packages is decided by the test, not the developer's shell
+        e.pop(k_, None)
     e.pop('HOMEBREW_NO_AUTO_UPDATE', None)   # the test decides whether Homebrew may refresh, not the developer's shell
     e.update(extra)
     return e
@@ -1016,6 +1018,115 @@ code_only = csrc.split('"""', 2)[2]            # everything after the module doc
 bad_words = [w for w in ('eval', 'addscript', 'addinitscript', 'cookies', 'storage', 'network', 'send', 'rpc') if _re.search(r'\b' + w + r'\b', code_only)]
 check('the code never names the powerful cmux commands (only the docstring says they are refused)', not bad_words, bad_words)
 check('the audit makes no cmux call unless --cmux is given (the flag is the only caller of the module)', csrc.count('subprocess.run') == 1 and open(os.path.join(SCRIPTS, 'audit.py')).read().count('cmuxview.show') == 1, '')
+
+# ---- pnpm: its global packages are read from its folder, and a shim is owned only when a package's own bin names it
+import adapters as _adapters
+import audit as _audit
+check('pnpm is no longer in the list of managers this version does not read', 'pnpm' not in _adapters.NOT_COVERED, sorted(_adapters.NOT_COVERED))
+check('reading pnpm needs no new command: the allow-list names no pnpm', not any('pnpm' in a for a in ALLOWED), ALLOWED)
+PMARK = 'PNPM-SHIM-CONTENT-7d2e'
+
+
+def pnpm_home(root, *, deps=None, second=None, malformed=False):
+    ph = os.path.join(root, 'Library', 'pnpm')
+    write(os.path.join(ph, 'global', '5', 'package.json'), '{not json' if malformed else json.dumps({'dependencies': deps or {'@scope/pkg': '^1', 'plain': '^1', '@scope/solo': '^1'}}))
+    write(os.path.join(ph, 'global', '5', 'node_modules', '@scope', 'pkg', 'package.json'), json.dumps({'name': '@scope/pkg', 'version': '1.2.3', 'bin': {'alpha': 'a.js', 'beta': 'b.js'}}))
+    write(os.path.join(ph, 'global', '5', 'node_modules', '@scope', 'solo', 'package.json'), json.dumps({'name': '@scope/solo', 'version': '3.0.0', 'bin': 'cli.js'}))
+    write(os.path.join(ph, 'global', '5', 'node_modules', 'plain', 'package.json'), json.dumps({'name': 'plain', 'version': '2.0.0', 'bin': 'cli.js'}))
+    write(os.path.join(ph, 'global', '6', 'package.json'), json.dumps({'dependencies': {'other': '^1'}}))
+    write(os.path.join(ph, 'global', '6', 'node_modules', 'other', 'package.json'), json.dumps({'name': 'other', 'version': '0.1.0', 'bin': {'oo': 'o.js'}}))
+    write(os.path.join(ph, 'store', 'v3', 'x'), 'content')
+    for n in ('alpha', 'beta', 'plain', 'solo', 'oo', 'stray'):
+        write(os.path.join(ph, n), f'#!/bin/sh\n# {PMARK}\n', 0o755)
+    return ph
+
+
+PH1 = os.path.join(ROOT, 'pnpmhome1')
+os.makedirs(PH1)
+ph1 = pnpm_home(PH1)
+
+
+def pnpm_audit(home, path_extra, **extra):
+    rc, out, err = sh('audit.py', '--home', home, '--apps-dir', os.path.join(home, 'Applications'), '--no-sizes', '--json',
+                      HOME=home, PATH=f'{path_extra}:{FAKEBIN}:/usr/bin:/bin', **extra)
+    return rc, (json.loads(out) if rc == 0 else None), out + err
+
+
+rc, rp, raw = pnpm_audit(PH1, ph1)
+gp = lambda n: next((i for i in rp['items'] if i['kind'] == 'binary' and i['name'] == n), None)
+check('the audit runs with a pnpm folder, and the pnpm source is ok', rc == 0 and {a['name']: a['status'] for a in rp['adapters']}.get('pnpm') == 'ok', raw[-300:])
+check('shims named by a package bin map are managed by pnpm, with the package in the evidence',
+      all(gp(n)['cls'] == 'managed' and gp(n)['owner'] == 'pnpm' and '@scope/pkg' in gp(n)['evidence'][0] for n in ('alpha', 'beta')), [gp(n) for n in ('alpha', 'beta')])
+check('a bin given as a plain string is the unscoped package name', gp('plain')['owner'] == 'pnpm' and 'plain' in gp('plain')['evidence'][0], gp('plain'))
+check('a string bin on a scoped package is named by the part after the slash, never the whole name', gp('solo')['owner'] == 'pnpm' and '@scope/solo' in gp('solo')['evidence'][0], gp('solo'))
+check('a second global project is read too', gp('oo')['owner'] == 'pnpm' and 'other' in gp('oo')['evidence'][0], gp('oo'))
+check('a shim no package names is not guessed to be pnpm\'s: unmanaged, since pnpm was read in full', gp('stray')['cls'] == 'unmanaged' and gp('stray')['owner'] == 'none', gp('stray'))
+check('pnpm packages are in the inventory with their versions', {(p['name'], p['version']) for p in rp['inventory'].get('pnpm', [])} == {('@scope/pkg', '1.2.3'), ('plain', '2.0.0'), ('@scope/solo', '3.0.0'), ('other', '0.1.0')}, rp['inventory'].get('pnpm'))
+check('the content of a shim never reaches the report', PMARK not in raw and PMARK not in json.dumps(rp), raw[:200])
+rc, mdp, _ = sh('audit.py', '--home', PH1, '--apps-dir', os.path.join(PH1, 'Applications'), '--no-sizes', HOME=PH1, PATH=f'{ph1}:{FAKEBIN}:/usr/bin:/bin')
+check('the text report names pnpm as a source and no longer lists it as unread', '| pnpm | ok |' in mdp and 'pnpm' not in mdp.split('Not read by this version:')[1].split('.')[0], mdp[:900])
+check('the pnpm folder is read only: no pnpm command ran', 'pnpm' not in open(LOG).read(), open(LOG).read()[-300:])
+
+PH2 = os.path.join(ROOT, 'pnpmhome2')
+os.makedirs(PH2)
+rc, rp2, raw2 = pnpm_audit(PH2, PH2)
+check('with no pnpm folder the source is missing and says why', rc == 0 and next(a for a in rp2['adapters'] if a['name'] == 'pnpm')['status'] == 'missing', raw2[-300:])
+
+PH3 = os.path.join(ROOT, 'pnpmhome3')
+os.makedirs(PH3)
+pnpm_home(PH3, malformed=True)
+rc, rp3, raw3 = pnpm_audit(PH3, os.path.join(PH3, 'Library', 'pnpm'))
+gp3 = lambda n: next((i for i in rp3['items'] if i['kind'] == 'binary' and i['name'] == n), None)
+check('an unreadable package.json fails the pnpm source, with no secret or content in the note', next(a for a in rp3['adapters'] if a['name'] == 'pnpm')['status'] == 'failed' and PMARK not in raw3, raw3[-300:])
+check('while pnpm cannot be read, a shim nobody claims is unknown, never unmanaged', gp3('stray')['cls'] == 'unknown', gp3('stray'))
+
+PH4 = os.path.join(ROOT, 'pnpmhome4')
+os.makedirs(PH4)
+pnpm_home(PH4, deps={'@scope/pkg': '^1', 'plain': '^1', 'gone': '^1', '../escape': '^1'})
+rc, rp4, raw4 = pnpm_audit(PH4, os.path.join(PH4, 'Library', 'pnpm'))
+a4 = next(a for a in rp4['adapters'] if a['name'] == 'pnpm')
+check('a declared package that is not installed, and a name that is not a package name, are warnings, not crashes',
+      rc == 0 and a4['status'] == 'failed' and 'gone' in a4['detail'] and 'not a package name' in a4['detail'], a4)
+
+OUTSIDE = os.path.join(ROOT, 'pnpm-outside')
+os.makedirs(os.path.join(OUTSIDE, 'global', '5', 'node_modules', 'sneaky'))
+write(os.path.join(OUTSIDE, 'global', '5', 'package.json'), json.dumps({'dependencies': {'sneaky': '1'}}))
+write(os.path.join(OUTSIDE, 'global', '5', 'node_modules', 'sneaky', 'package.json'), json.dumps({'name': 'sneaky', 'version': '1', 'bin': {'sneaky': 'x.js'}}))
+PH5 = os.path.join(ROOT, 'pnpmhome5')
+os.makedirs(PH5)
+rc, rp5, raw5 = pnpm_audit(PH5, PH5, PNPM_HOME=OUTSIDE)
+check('PNPM_HOME outside home and off PATH is ignored', next(a for a in rp5['adapters'] if a['name'] == 'pnpm')['status'] == 'missing', raw5[-300:])
+rc, rp6, raw6 = pnpm_audit(PH5, PH5, PNPM_HOME='relative/pnpm')
+check('a relative PNPM_HOME is ignored', next(a for a in rp6['adapters'] if a['name'] == 'pnpm')['status'] == 'missing', raw6[-300:])
+rc, rp7, raw7 = pnpm_audit(PH5, PH5, PNPM_HOME=os.path.join(PH5, 'elsewhere'))
+check('a PNPM_HOME that does not exist is ignored', next(a for a in rp7['adapters'] if a['name'] == 'pnpm')['status'] == 'missing', raw7[-300:])
+custom = os.path.join(PH5, 'custom-pnpm')
+os.makedirs(os.path.join(custom, 'global', '5', 'node_modules', 'mine'))
+write(os.path.join(custom, 'global', '5', 'package.json'), json.dumps({'dependencies': {'mine': '1'}}))
+write(os.path.join(custom, 'global', '5', 'node_modules', 'mine', 'package.json'), json.dumps({'name': 'mine', 'version': '1', 'bin': {'mine': 'x.js'}}))
+write(os.path.join(custom, 'mine'), '#!/bin/sh\n', 0o755)
+rc, rp8, raw8 = pnpm_audit(PH5, custom, PNPM_HOME=custom)
+check('a PNPM_HOME under home is used', rc == 0 and next(i for i in rp8['items'] if i['name'] == 'mine' and i['kind'] == 'binary')['owner'] == 'pnpm', raw8[-300:])
+
+# a link that cannot be read for lack of rights says so, and stays unknown; any other read error keeps the plain wording
+import errno as _errno
+lockdir = os.path.join(HOME, 'lockbin')   # under home: a folder in the temp area would be skipped as ephemeral
+write(os.path.join(lockdir, 'locked'), '', 0o755)
+write(os.path.join(lockdir, 'flaky'), '', 0o755)
+real_chain = _audit.chain
+def picky_chain(p, limit=8):
+    if p.endswith('/locked'):
+        raise PermissionError(_errno.EACCES, 'Permission denied')
+    if p.endswith('/flaky'):
+        raise OSError(_errno.EIO, 'Input/output error')
+    return real_chain(p, limit)
+_audit.chain = picky_chain
+try:
+    got = {i['name']: i for i in _audit.scan_bins(_audit.Ctx(HOME, [lockdir], []), {}, type('R', (), {'find_name': lambda self, n: []})(), [])[0] if i['path'].startswith(lockdir)}
+finally:
+    _audit.chain = real_chain
+check('an unreadable link names the missing rights and stays unknown', got['locked']['cls'] == 'unknown' and 'needs admin rights to read' in got['locked']['evidence'][0], got.get('locked'))
+check('any other read error keeps the plain wording', got['flaky']['cls'] == 'unknown' and 'Input/output error' in got['flaky']['evidence'][0] and 'admin rights' not in got['flaky']['evidence'][0], got.get('flaky'))
 
 # ---- tidy prints, re-checks, and refuses
 scan = os.path.join(ROOT, 'audit.json')
