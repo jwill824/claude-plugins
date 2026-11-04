@@ -14,13 +14,13 @@ GLYPH = {'managed': '●', 'owned': '●', 'unmanaged': '◇', 'orphaned': '▲'
 LABEL = {'managed': 'Managed by a package manager', 'owned': 'Folder of an installed tool', 'unmanaged': 'Unmanaged (neutral)',
          'orphaned': 'Orphan candidate', 'referenced': 'Referenced or recently used', 'unknown': 'Unknown', 'missing': 'Declared but not installed', 'unattributed': 'Unattributed',
          'config': 'Personal config', 'system': 'System'}
-FORMULA_GROUPS = {'brew': 'Homebrew formulae', 'mise': 'mise tools', 'npm': 'npm globals', 'uv': 'uv tools', 'rustup': 'rustup toolchains'}
+FORMULA_GROUPS = {'brew': 'Homebrew formulae', 'mise': 'mise tools', 'npm': 'npm globals', 'pnpm': 'pnpm globals', 'uv': 'uv tools', 'rustup': 'rustup toolchains'}
 APP_GROUPS = {'brew': 'Apps: Homebrew casks', 'mas': 'Apps: App Store', 'manual': 'Apps: installed by hand', 'apple': 'Apps: Apple', 'unknown': 'Apps: unknown'}
 DOT_GROUPS = {'owned': 'Installed tools: dot-folders', 'orphaned': 'Orphan candidates: dot-folders', 'referenced': 'Referenced: dot-folders',
               'unattributed': 'Unattributed: dot-folders', 'config': 'Personal config: dot-folders', 'unmanaged': 'Self-installed: dot-folders', 'unknown': 'Unknown: dot-folders', 'system': 'System: dot-folders'}
 MAX_LEAVES = 70
 MAX_ZOOM = 400
-MGR_LABEL = {'brew': 'Homebrew', 'mise': 'mise', 'npm': 'npm globals', 'uv': 'uv tools', 'cargo': 'cargo crates', 'rustup': 'rustup toolchains',
+MGR_LABEL = {'brew': 'Homebrew', 'mise': 'mise', 'npm': 'npm globals', 'pnpm': 'pnpm globals', 'uv': 'uv tools', 'cargo': 'cargo crates', 'rustup': 'rustup toolchains',
              'mas': 'App Store apps', 'apple': 'Apple apps', 'manual': 'Apps installed by hand'}
 
 
