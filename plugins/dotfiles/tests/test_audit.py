@@ -267,6 +267,18 @@ check('a self-installing tool folder gets a neutral verdict', g('dotitem', '.oh-
 check('credentials and shell config are never candidates', all(g('dotitem', n)['cls'] == 'config' for n in ('.ssh', '.npmrc', '.zshrc')), [g('dotitem', n)['cls'] for n in ('.ssh', '.npmrc', '.zshrc')])
 check('nothing in a keep entry is ever orphaned', not any(i['cls'] == 'orphaned' and i['name'] in ('.ssh', '.npmrc', '.zshrc') for i in rep['items']))
 
+# the folders added in 0.12: credential holders are kept, the rest need an installed tool, and none is a guess about a personal tool
+import knowledge  # noqa: E402
+CRED = ('.config/gcloud', '.config/github-copilot', '.context7', '.ccs')
+TOOLS = ('.config/raycast', '.local/share/gh', '.local/state/gh', '.config/direnv', '.local/share/direnv', '.config/lnav', '.config/powershell',
+         '.local/share/powershell', '.cache/powershell', '.config/fresh', '.local/state/fresh', '.cache/helix', '.cache/tree-sitter',
+         '.local/state/pnpm', '.bun', '.cache/actcache', '.config/openspec', '.config/cmux', '.local/state/cmux')
+check('folders that can hold credentials are kept, so never offered', all(knowledge.lookup(r) and knowledge.lookup(r).keep for r in CRED), '')
+check('state files of well known tools are kept', all(knowledge.lookup(r) and knowledge.lookup(r).keep for r in ('.local/state/lesshst', '.local/state/dotfiles')), '')
+check('the other new folders belong to a tool that must be installed', all(knowledge.lookup(r) and knowledge.lookup(r).needles and not knowledge.lookup(r).keep for r in TOOLS), '')
+check('personal and uncertain tools stay unattributed', all(knowledge.lookup(r) is None for r in ('.worklog', '.gsd', '.claudep', '.xaide', '.jumpmind', '.cache/prisma', '.agents', '.cache/ck')), '')
+check('no path is in the table twice', len({e.path for e in knowledge._ENTRIES}) == len(knowledge._ENTRIES), '')
+
 # ---- read-only, and no secrets anywhere
 logged = [l.strip() for l in open(LOG)] if os.path.exists(LOG) else []
 ok_cmds = {' '.join(a) for a in ALLOWED}
