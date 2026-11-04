@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.13.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.12.0...dotfiles-v0.13.0) (2026-11-04)
+
+
+### Features
+
+* **dotfiles:** select a whole list at once in the map ([#28](https://github.com/jwill824/claude-plugins/issues/28)) ([587ff5f](https://github.com/jwill824/claude-plugins/commit/587ff5fc142ea1e9c6d8ab7109ae7db52c70e08c))
+
 # [0.12.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.11.1...dotfiles-v0.12.0) (2026-11-04)
 
 
