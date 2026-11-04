@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.11.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.10.2...dotfiles-v0.11.0) (2026-11-04)
+
+
+### Features
+
+* **dotfiles:** read pnpm's global packages ([#25](https://github.com/jwill824/claude-plugins/issues/25)) ([5fc5ada](https://github.com/jwill824/claude-plugins/commit/5fc5adaff74bd23fed932428ce0b1782c1749cce))
+
 ## [0.10.2](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.10.1...dotfiles-v0.10.2) (2026-11-04)
 
 
