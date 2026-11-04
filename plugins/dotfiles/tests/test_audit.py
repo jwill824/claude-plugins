@@ -398,6 +398,12 @@ check('the overview blocks all have a pre-rendered detail block, and nothing els
 check('the manager tables are present in the page itself, not built by the script', 'What each manager has installed' in doc and '<table class="sortable">' in doc and 'Homebrew (' in doc and 'mise (' in doc, '')
 check('a table header sorts by a real button', _re.search(r'<th><button type="button" data-type="num">Size</button></th>', doc) is not None, '')
 check('list rows carry a select box (shown by the script) and the key, and the filter attributes', 'class="pick" data-js hidden' in doc and 'data-acc="0"' in doc and 'aria-pressed="false"' in doc, '')
+segs = doc.split('data-list>')[1:]
+check('every list with tickable rows carries exactly one select-all box, and no other list does', len(segs) >= 4 and all(blk.count('class="pickall"') == (1 if 'class="pick"' in blk else 0) for blk in segs) and 'function toggleList(box)' in mapjs.SCRIPT and 'toggleList(pickAll)' in mapjs.SCRIPT, len(segs))
+_row = {'key': 'dotitem:a', 'name': 'a', 'cls': 'orphaned', 'kind': 'dotitem', 'path': '', 'kb': 1, 'evidence': [], 'referenced_by': [], 'flags': [], 'suggestions': []}
+check('an empty list has no select-all box', 'pickall' not in htmlmap.rows([], HOME, 'None.'), '')
+check('a list whose rows cannot be ticked has no select-all box', 'pickall' not in htmlmap.rows([dict(_row, key='dotitem:a\nb')], HOME, ''), '')
+check('a list with a tickable row has the box, hidden until the script runs', 'class="pickall"' in htmlmap.rows([_row], HOME, '') and 'data-js hidden' in htmlmap.rows([_row], HOME, ''), '')
 # hostile input, everywhere it can land
 EV2 = '<img src=x onerror=alert(1)>"\'&</script><script>alert(2)</script>'
 lv_h = [{'group': EV2, 'name': EV2, 'kb': 5000, 'cls': 'orphaned', 'tip': EV2, 'key': 'dotitem:' + EV2, 'acc': True, 'id': 'n0', 'body': htmlmap.item_inner(

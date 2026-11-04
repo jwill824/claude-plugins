@@ -79,6 +79,25 @@ SCRIPT = r'''
     bAccept.disabled = n === 0;
     bTidy.disabled = !allOrphans;
     bTidy.title = allOrphans || n === 0 ? '' : 'Only orphan candidates can go to /dotfiles:tidy';
+    all('[data-list]').forEach(function (l) {
+      var box = one('input.pickall', l);
+      if (!box) { return; }
+      var picks = all('input.pick', l).filter(function (c) { return !c.closest('.it').hidden; });
+      var on = picks.filter(function (c) { return selected.has(c.getAttribute('data-key')); }).length;
+      box.checked = picks.length > 0 && on === picks.length;
+      box.indeterminate = on > 0 && on < picks.length;
+      box.disabled = picks.length === 0;
+      one('.allt', l).textContent = 'Select all ' + picks.length + ' shown';
+    });
+  }
+  // one box per list: ticks every row of that list that the filter leaves visible, or clears them when all are ticked already
+  function toggleList(box) {
+    var picks = all('input.pick', box.closest('[data-list]')).filter(function (c) { return !c.closest('.it').hidden; });
+    var every = picks.length > 0 && picks.every(function (c) { return selected.has(c.getAttribute('data-key')); });
+    picks.forEach(function (c) {
+      if (every) { selected.delete(c.getAttribute('data-key')); } else { selected.set(c.getAttribute('data-key'), c.getAttribute('data-cls')); }
+    });
+    syncSelection();
   }
   function lines(command) { return command + '\n' + Array.from(selected.keys()).join('\n'); }
   function fallbackCopy(text) {
@@ -127,6 +146,7 @@ SCRIPT = r'''
       }
     });
     shown.textContent = q === '' && !any ? '' : 'Showing ' + vis + ' of ' + total;
+    syncSelection();
   }
   query.addEventListener('input', applyFilter);
   chips.forEach(function (c) {
@@ -167,6 +187,8 @@ SCRIPT = r'''
     if (go) { showView(go.getAttribute('data-go')); return; }
     if (t.closest('[data-back]')) { showView(null); return; }
     if (t.closest('#detail-close')) { closeDetail(); return; }
+    var pickAll = t.closest('input.pickall');
+    if (pickAll) { toggleList(pickAll); return; }
     var pick = t.closest('input.pick');
     if (pick) { toggle(pick.getAttribute('data-key'), pick.getAttribute('data-cls')); return; }
     var sel = t.closest('button.sel');
