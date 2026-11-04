@@ -225,7 +225,9 @@ def rows(items, home, empty):
                    f'<span class="sz">{human(i["kb"]) if i.get("kb") else ""}</span><span class="nm">{e(where)}</span>'
                    f'<span class="chips">{mark}<span class="chip c-{i["cls"]}">{GLYPH[i["cls"]]} {e(i["cls"])}</span></span></summary>'
                    f'<div class="body">{item_inner(i, {})}</div></details>')
-    return ''.join(out)
+    ticks = '' if all(has_control(i['key']) for i in items) else (
+        '<label class="all" data-js hidden><input type="checkbox" class="pickall" aria-label="Select all rows shown in this list"> <span class="allt">Select all shown</span></label>')
+    return '<div class="list" data-list>' + ticks + ''.join(out) + '</div>'
 
 
 def manager_panels(rep):
@@ -308,6 +310,7 @@ button[aria-pressed=true]{background:var(--fg);color:var(--bg);border-color:var(
 .tw table{margin:0;width:100%;font-size:13px}.tw th{position:sticky;top:0}.tw th button{border:0;background:none;padding:0;font-weight:600;cursor:pointer}
 th[aria-sort=ascending] button::after{content:' ▲'}th[aria-sort=descending] button::after{content:' ▼'}
 .pk{display:inline-flex;justify-content:center}.chips{display:inline-flex;gap:6px}
+.all{display:flex;gap:6px;align-items:center;padding:6px 2px;font-size:13px;color:var(--mut);border-bottom:1px solid var(--bd)}
 .it{border-bottom:1px solid var(--bd)}.it>summary{display:grid;grid-template-columns:24px 78px 1fr auto;gap:10px;align-items:center;padding:8px 2px;cursor:pointer;list-style:none}
 .it>summary::-webkit-details-marker{display:none}.sz{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip{font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid var(--ring);white-space:nowrap}
