@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.12.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.11.1...dotfiles-v0.12.0) (2026-11-04)
+
+
+### Features
+
+* **dotfiles:** recognise 25 more tool folders ([#27](https://github.com/jwill824/claude-plugins/issues/27)) ([f4e2233](https://github.com/jwill824/claude-plugins/commit/f4e2233311511e9d030352e725a8ff991d8204ea))
+
 ## [0.11.1](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.11.0...dotfiles-v0.11.1) (2026-11-04)
 
 
