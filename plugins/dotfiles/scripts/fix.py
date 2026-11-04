@@ -76,13 +76,36 @@ def in_use(path):
     return None
 
 
+# What is not a key even though its name looks like one. Each rule is narrow, and anything else still holds the item:
+#  - a source file (`tokens.pyi`, `token.py`, `credentials.js`) is code that talks about tokens, not a token
+#  - a folder is a container: whatever is inside it is looked at by its own name (a link to a folder is still judged by name)
+#  - a `.pem` or `.key` inside a test folder of a package that was installed as a dependency (`node_modules/x/test/test_key.pem`)
+#    is a fixture the package ships; the same file anywhere else still holds
+CODE_NAME = re.compile(r'^\.?(tokens?|credentials)\.(py|pyi|js|mjs|cjs|ts|tsx|jsx|java|kt|go|rs|rb)$', re.I)
+VENDORED = ('node_modules', 'site-packages')
+FIXTURE_DIRS = ('test', 'tests', '__tests__', 'fixtures', 'testdata')
+
+
+def is_key_file(root, dirpath, name, is_dir=False):
+    """True when this file name, found under the item `root`, should hold the item."""
+    if not KEY_NAMES.match(name) or is_dir or CODE_NAME.match(name):
+        return False
+    if name.lower().endswith(('.pem', '.key')):
+        parts = os.path.relpath(dirpath, root).split(os.sep)
+        vend = [n for n, p in enumerate(parts) if p in VENDORED]
+        if vend and any(p in FIXTURE_DIRS for p in parts[vend[0] + 1:]):
+            return False
+    return True
+
+
 def key_material(path):
     """Names only, bounded. A hit or an unfinished walk is a hold: whether something is a credential is the user's call."""
     seen = 0
     for dp, dns, fns in os.walk(path):
-        for n in dns + fns:
+        entries = [(n, not os.path.islink(os.path.join(dp, n))) for n in dns] + [(n, False) for n in fns]
+        for n, is_dir in entries:
             seen += 1
-            if KEY_NAMES.match(n):
+            if is_key_file(path, dp, n, is_dir):
                 return f'possible key material ({n}, by name only): move it by hand if you are sure'
             if seen >= WALK_LIMIT:
                 return 'too large to look through for key material names'
@@ -121,7 +144,7 @@ def check_item(i, ctx):
                 why = gate(p)
                 if why:
                     return why
-        elif KEY_NAMES.match(os.path.basename(p)):
+        elif is_key_file(os.path.dirname(p), os.path.dirname(p), os.path.basename(p)):
             return f'possible key material ({os.path.basename(p)}, by name only): move it by hand if you are sure'
     return None
 
