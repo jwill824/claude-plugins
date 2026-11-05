@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.14.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.13.0...dotfiles-v0.14.0) (2026-11-05)
+
+
+### Features
+
+* **dotfiles:** list unattributed dot-items in the map ([#30](https://github.com/jwill824/claude-plugins/issues/30)) ([20c70d9](https://github.com/jwill824/claude-plugins/commit/20c70d933281c0b236cc1137a1887831b5916563))
+
 # [0.13.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.12.0...dotfiles-v0.13.0) (2026-11-04)
 
 

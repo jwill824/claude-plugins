@@ -1,7 +1,7 @@
 {
   "name": "dotfiles",
   "displayName": "Dotfiles",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Audit what is installed on a Mac and who owns it: Homebrew, mise, npm, pnpm, uv, cargo, applications, commands on PATH and dotfiles. Finds what no package manager claims and leftovers whose tool is gone, with evidence. Read-only apart from two typed-only commands: one records what you accept, one moves orphans to the Trash after a dry run; it audits dotfiles, it does not manage them. The HTML map is interactive but fully offline.",
   "author": {
     "name": "Jeff Williams"
