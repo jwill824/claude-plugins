@@ -404,6 +404,9 @@ _row = {'key': 'dotitem:a', 'name': 'a', 'cls': 'orphaned', 'kind': 'dotitem', '
 check('an empty list has no select-all box', 'pickall' not in htmlmap.rows([], HOME, 'None.'), '')
 check('a list whose rows cannot be ticked has no select-all box', 'pickall' not in htmlmap.rows([dict(_row, key='dotitem:a\nb')], HOME, ''), '')
 check('a list with a tickable row has the box, hidden until the script runs', 'class="pickall"' in htmlmap.rows([_row], HOME, '') and 'data-js hidden' in htmlmap.rows([_row], HOME, ''), '')
+mystery_key = htmlmap.e(g('dotitem', '.mystery-dir')['key'])
+check('unattributed dot-items are listed in the map, tickable, with their own filter chip',
+      'Unattributed dot-items (' in doc and f'class="pick" data-js hidden data-key="{mystery_key}"' in doc and 'data-f="unattributed"' in doc, '')
 # hostile input, everywhere it can land
 EV2 = '<img src=x onerror=alert(1)>"\'&</script><script>alert(2)</script>'
 lv_h = [{'group': EV2, 'name': EV2, 'kb': 5000, 'cls': 'orphaned', 'tip': EV2, 'key': 'dotitem:' + EV2, 'acc': True, 'id': 'n0', 'body': htmlmap.item_inner(

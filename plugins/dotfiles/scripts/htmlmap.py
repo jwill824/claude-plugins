@@ -386,6 +386,7 @@ def render(rep):
         node['id'] = f'n{n}'
     orph, ref, unk = cls('orphaned'), cls('referenced'), cls('unknown')
     unm = cls('unmanaged')
+    una = sorted(cls('unattributed'), key=lambda i: -(i['kb'] or 0))
     cov = rep.get('coverage')
     sized = sum(i['kb'] for i in lv)
     tl = [('sized on disk', human(sized))]
@@ -402,7 +403,7 @@ def render(rep):
     legend = ''.join(f'<span><i class="sw c-{c}"></i>{GLYPH[c]} {e(LABEL[c])}</span>' for c in ('managed', 'unmanaged', 'orphaned', 'referenced', 'unknown', 'unattributed', 'config')) \
         + '<span><i class="sw acc-sw"></i>✓ Accepted by you (kept on purpose)</span>'
     chips = ''.join(f'<button type="button" data-f="{c}" aria-pressed="false">{e(l)}</button>' for c, l in (
-        ('orphaned', 'Orphan candidates'), ('unmanaged', 'Unmanaged'), ('referenced', 'Referenced'), ('unknown', 'Unknown'), ('missing', 'Missing'), ('managed', 'Managed'), ('accepted', 'Accepted')))
+        ('orphaned', 'Orphan candidates'), ('unmanaged', 'Unmanaged'), ('unattributed', 'Unattributed'), ('referenced', 'Referenced'), ('unknown', 'Unknown'), ('missing', 'Missing'), ('managed', 'Managed'), ('accepted', 'Accepted')))
     toolbar = (f'<div class="bar" data-js hidden role="search"><input id="q" type="search" placeholder="Search names" aria-label="Search names">{chips}'
                '<span id="shown" role="status" aria-live="polite" class="note"></span></div>')
     store = ''.join(f'<div data-d="{e(n["id"])}">{n["body"]}</div>' for n in lv)
@@ -435,4 +436,7 @@ def render(rep):
             + f'<h2>Unknown ({len(unk)})</h2>' + rows(unk[:60], home, 'None.')
             + f'<h2>Unmanaged ({len(unm)})</h2><p class="note">Installed, but no package manager claims them. Neutral: how they got here, not a to-do.</p>'
             + rows(sorted(unm, key=lambda i: -(i['kb'] or 0))[:80], home, 'None.')
+            + f'<h2>Unattributed dot-items ({len(una)})</h2><p class="note">Folders and files the knowledge table has no entry for, so nothing says who made them. Never guessed, never offered for removal: tick the ones you recognise and copy /dotfiles:accept.'
+            + (f' Showing the largest 80 of {len(una)}.' if len(una) > 80 else '') + '</p>'
+            + rows(una[:80], home, 'None.')
             + selbar + '</main><script>' + mapjs.SCRIPT + '</script></body></html>')

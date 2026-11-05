@@ -15,7 +15,7 @@ SCAN="$(mktemp -d)/audit.json"
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/audit.py --save "$SCAN" $ARGUMENTS
 ```
 
-It takes under a minute (most of it is sizing folders). `--all` lists every Homebrew formula, not only the ones you asked for. `--json` prints the full result instead of the report. `--html FILE` also writes a self-contained map: a treemap of what is installed by owner and size, with the orphan, referenced, unknown and unmanaged lists underneath (it sizes every package too, so it takes a little longer). The saved JSON is what `/dotfiles:tidy` reads.
+It takes under a minute (most of it is sizing folders). `--all` lists every Homebrew formula, not only the ones you asked for. `--json` prints the full result instead of the report. `--html FILE` also writes a self-contained map: a treemap of what is installed by owner and size, with the orphan, referenced, unknown, unmanaged and unattributed lists underneath (it sizes every package too, so it takes a little longer). The saved JSON is what `/dotfiles:tidy` reads.
 
 `--offline` stops Homebrew from refreshing its own name index while the checker searches it. Without it, `brew search` follows Homebrew's own staleness rule (about once a day), which may use the network and rewrites Homebrew's cache, and nothing else; the report's "Adoption candidates" section says whether the index was *refreshed* or *cached*. Tell the user when it was refreshed. `--check NAME` (repeatable) also looks for a manager that offers a name the user types.
 
