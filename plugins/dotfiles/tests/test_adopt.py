@@ -67,6 +67,7 @@ def world():
         python3 -c "import json;p='{ROOT}/installed.json';d=json.load(open(p));d['casks'].append({{'token':'$4'}});json.dump(d,open(p,'w'))";;
   "install --cask "*) [ -n "$FAKE_BREW_FAIL" ] && {{ echo "Error: download failed" >&2; exit 1; }}
         echo "apps-at-install: $(ls "{APPS}" | tr '\\n' ' ')" >> "{LOG}"
+        [ -n "$FAKE_BREW_NODETECT" ] && exit 0
         python3 -c "import json;p='{ROOT}/installed.json';d=json.load(open(p));d['casks'].append({{'token':'$3'}});json.dump(d,open(p,'w'))";;
   *) exit 99;;
 esac''')
@@ -81,7 +82,8 @@ esac''')
 import json,os,sys
 spec=sys.argv[1]; tool,ver=spec.rsplit('@',1); name=tool.split(':')[-1].split('/')[-1]
 base="{ROOT}/misei/"+name+"/"+ver
-os.makedirs(base+"/bin",exist_ok=True); open(base+"/bin/"+name,"w").write("x")
+sub="/"+name+"_"+ver+"_darwin_arm64" if os.environ.get("FAKE_MISE_NESTED") else "/bin"
+os.makedirs(base+sub,exist_ok=True); open(base+sub+"/"+name,"w").write("x")
 p="{ROOT}/mise-ls.json"; d=json.load(open(p)); d[tool]=[{{"version":ver,"install_path":base,"installed":True,"active":True}}]; json.dump(d,open(p,"w"))
 EOF
         ;;
@@ -319,6 +321,30 @@ run(a, *keys(its, 'oras'), '--plan', plan)
 rc, out, err = run(a, '--plan', plan, '--execute', FAKE_MISE_NODETECT='1')
 st = [json.loads(l)['status'] for l in open(os.path.join(STATE, 'adopt-log.jsonl'))][-1]
 check('installed but not claimed by the manager is reported, never counted as adopted', rc == 1 and st == 'installed-not-detected' and 'not counted as adopted' in out, (rc, st, out))
+
+its = standard()
+a = audit_file(its)
+run(a, *keys(its, 'oras'), '--plan', plan)
+rc, out, err = run(a, '--plan', plan, '--execute', FAKE_MISE_NESTED='1')
+check('a tool that unpacks into a folder (aqua archives) is still found, within a bounded search', rc == 0 and '# Adopted 1 item(s)' in out, out)
+its = standard()
+a = audit_file(its)
+run(a, *keys(its, 'Firefox'), '--plan', plan)
+rc, out, err = run(a, '--plan', plan, '--execute', FAKE_BREW_NODETECT='1')
+check('a replace that installs but is not claimed is not counted, and says where the old app is',
+      rc == 1 and 'not counted as adopted' in out and 'old app is in the Trash at' in out and any(n.startswith('Firefox.app ') for n in os.listdir(TRASH)), out)
+base = os.path.join(ROOT, 'deep')
+put(os.path.join(base, 'a/b/c/d/oras'), 'x')
+put(os.path.join(base, 'a/b/oras'), 'x')
+check('a binary two folders down is found, and a folder that is not there finds nothing', adopt.has_binary(base, 'oras') and not adopt.has_binary(os.path.join(ROOT, 'deep2'), 'oras'), '')
+os.remove(os.path.join(base, 'a/b/oras'))
+check('and a binary four levels down is not counted', not adopt.has_binary(base, 'oras'), '')
+check('the per-manager table drives everything: two adopters, each declaring its kind, adapter, reads, writes and gate',
+      set(adopt.ADOPTERS) == {'brew-cask', 'mise'} and all({'kind', 'adapter', 'reads', 'writes', 'assess'} <= set(v) for v in adopt.ADOPTERS.values()), set(adopt.ADOPTERS))
+probe = ['uv', 'tool', 'install', 'x']
+check('a command is on no allow-list until an adopter declares it, and off again when it is removed', not adopt.allowed_write(probe)
+      and not (adopt.ADOPTERS.update({'uv-probe': {'kind': 'x', 'adapter': 'uv', 'reads': lambda a: False, 'writes': lambda a: list(a) == probe, 'assess': None}}) or not adopt.allowed_write(probe))
+      and not (adopt.ADOPTERS.pop('uv-probe') and adopt.allowed_write(probe)), '')
 
 # ---------------------------------------------------------------- plans cannot be reused, edited, aged or run against a changed world
 its = standard()

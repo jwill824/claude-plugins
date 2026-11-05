@@ -27,29 +27,43 @@ from fix import device_of, drifted, fingerprint, trash_dest
 PLAN_MAX_AGE = 3600
 INSTALL_TIMEOUT = 900
 READ_TIMEOUT = 60
-MANAGERS = {'app': ('brew-cask', 'brew'), 'binary': ('mise', 'mise')}     # kind -> (adopter, the audit's adapter name)
 
-# ---- the exact commands this tool may run. Reads first, then the only two kinds of write.
-READS = (('brew', 'info', '--json=v2', '--installed'), ('mise', 'registry'), ('mise', 'ls', '--json'), ('mise', 'config', 'ls'), ('ps', '-axo', 'command'))
-
-
-def allowed_read(argv):
+# ---- one entry per manager. An adopter declares what it adopts, which audit adapter must have read cleanly, the exact commands it
+# may read and write, and its eligibility gate (`assess`). Adding uv, cargo or npm later is a new entry here and its own gate in
+# adoptgates.py, never a new code path in the dry run or execute. The allow-lists below are the union of what the entries declare.
+def cask_reads(argv):
     argv = tuple(argv)
-    return (argv in READS
-            or (len(argv) == 5 and argv[:4] == ('brew', 'info', '--cask', '--json=v2') and bool(G.NAME_RE.match(argv[4])))
-            or (len(argv) == 3 and argv[:2] == ('mise', 'latest') and bool(G.NAME_RE.match(argv[2]))))
+    return (argv in (('brew', 'info', '--json=v2', '--installed'), ('ps', '-axo', 'command'))
+            or (len(argv) == 5 and argv[:4] == ('brew', 'info', '--cask', '--json=v2') and bool(G.NAME_RE.match(argv[4]))))
 
 
-def allowed_write(argv):
+def cask_writes(argv):
     argv = tuple(argv)
     if len(argv) == 5 and argv[:4] == ('brew', 'install', '--cask', '--adopt'):
         return bool(G.NAME_RE.match(argv[4]))
-    if len(argv) == 4 and argv[:3] == ('brew', 'install', '--cask'):
-        return bool(G.NAME_RE.match(argv[3]))
+    return len(argv) == 4 and argv[:3] == ('brew', 'install', '--cask') and bool(G.NAME_RE.match(argv[3]))
+
+
+def mise_reads(argv):
+    argv = tuple(argv)
+    return (argv in (('mise', 'registry'), ('mise', 'ls', '--json'), ('mise', 'config', 'ls'))
+            or (len(argv) == 3 and argv[:2] == ('mise', 'latest') and bool(G.NAME_RE.match(argv[2]))))
+
+
+def mise_writes(argv):
+    argv = tuple(argv)
     if len(argv) == 4 and argv[:3] == ('mise', 'use', '-g') and '@' in argv[3]:
         spec, _, ver = argv[3].rpartition('@')
         return bool(G.BACKEND_RE.match(spec) or G.NAME_RE.match(spec)) and bool(G.VERSION_RE.match(ver))
     return False
+
+
+def allowed_read(argv):
+    return any(a['reads'](argv) for a in ADOPTERS.values())
+
+
+def allowed_write(argv):
+    return any(a['writes'](argv) for a in ADOPTERS.values())
 
 
 def _exec(argv, timeout, env_extra=None):
@@ -137,17 +151,13 @@ def global_mise_config(home):
 # ---- one item: everything that decides whether and how it is adopted
 def assess(item, rep, ctx):
     """({'mode', 'argv', 'name', 'version', 'source', ...} or None, why-held or None). Used by the dry run and again by execute."""
-    why = None
-    kind = item['kind']
-    if kind not in MANAGERS:
-        return None, f'a {kind} is not adopted; only apps and commands are'
-    adopter, adapter = MANAGERS[kind]
-    why = G.common_gate(item, ctx['records'], adapter_status(rep, adapter))
+    adopter = BY_KIND.get(item['kind'])
+    if adopter is None:
+        return None, f"a {item['kind']} is not adopted; only apps and commands are"
+    why = G.common_gate(item, ctx['records'], adapter_status(rep, adopter['adapter']))
     if why:
         return None, why
-    if kind == 'app':
-        return assess_app(item, ctx)
-    return assess_command(item, ctx)
+    return adopter['assess'](item, ctx)
 
 
 def assess_app(item, ctx):
@@ -217,6 +227,13 @@ def assess_command(item, ctx):
 
 def err_text(st, out):
     return st if st != 'ok' else 'empty answer'
+
+
+ADOPTERS = {
+    'brew-cask': {'kind': 'app', 'adapter': 'brew', 'reads': cask_reads, 'writes': cask_writes, 'assess': assess_app},
+    'mise': {'kind': 'binary', 'adapter': 'mise', 'reads': mise_reads, 'writes': mise_writes, 'assess': assess_command},
+}
+BY_KIND = {a['kind']: a for a in ADOPTERS.values()}
 
 
 # ---- plan files, as in fix.py
@@ -314,14 +331,26 @@ def dry_run(a, items, rep, ctx, warn):
     return code
 
 
+def has_binary(base, name, depth=3):
+    """A file called `name` within `depth` levels of `base` (aqua archives may unpack into a folder). Names only, never contents."""
+    if not base or not os.path.isdir(base):
+        return False
+    base_depth = base.rstrip(os.sep).count(os.sep)
+    for dp, dns, fns in os.walk(base):
+        if dp.count(os.sep) - base_depth >= depth:
+            dns[:] = []
+        if name in fns:
+            return True
+    return False
+
+
 def verify(entry):
     """True if the manager now claims this very name (and for commands, a binary of that name exists)."""
     if entry['mode'] == 'mise':
         ls, _ = json_of(['mise', 'ls', '--json'])
         for v in G.tool_claimed(ls, entry['name']) or []:
             if v.get('installed') and v.get('version') == entry['version']:
-                base = v.get('install_path') or ''
-                return any(os.path.lexists(os.path.join(base, *p)) for p in ((entry['name'],), ('bin', entry['name'])))
+                return has_binary(v.get('install_path') or '', entry['name'])
         return False
     inst, _ = json_of(['brew', 'info', '--json=v2', '--installed'])
     return bool(inst) and any(c.get('token') == entry['name'] for c in inst.get('casks', []))
@@ -403,7 +432,8 @@ def execute(a, items, rep, ctx):
             done.append((entry, i, moved_to, backup))
             log.append(rec(plan, entry, 'adopted', ''))
         else:
-            failed.append((key, 'installed, but the manager does not claim it as expected (not counted as adopted); check with a new audit'))
+            where = f" The old app is in the Trash at `{tilde(moved_to, ctx['home'])}`." if moved_to else ''
+            failed.append((key, 'installed, but the manager does not claim it as expected (not counted as adopted); check with a new audit.' + where))
             log.append(rec(plan, entry, 'installed-not-detected', ''))
     if log:
         write_log(log)

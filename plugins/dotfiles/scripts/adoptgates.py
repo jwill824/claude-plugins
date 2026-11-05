@@ -109,7 +109,7 @@ def replace_gate(app_path, home, trash_dev, dev_of, allowed_dirs=None):
     if parent not in dirs:
         return f'it is in {parent}, not /Applications or ~/Applications'
     if not (os.access(parent, os.W_OK) and os.access(app_path, os.W_OK)):
-        return ('this terminal is not allowed to modify it (macOS App Management protection, or it belongs to another user): grant the terminal App Management in '
+        return ('this terminal is not allowed to modify it (macOS App Management protection, or it belongs to another user): it may help to grant the terminal App Management in '
                 'System Settings > Privacy & Security, or move the app yourself; this tool never uses admin rights')
     if dev_of(app_path) != trash_dev:
         return 'it is on another volume than the Trash, so it cannot be moved back by a rename'
