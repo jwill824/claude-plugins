@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.15.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.14.0...dotfiles-v0.15.0) (2026-11-05)
+
+
+### Features
+
+* **dotfiles:** adopt unmanaged apps and tools under a manager ([#31](https://github.com/jwill824/claude-plugins/issues/31)) ([6581db9](https://github.com/jwill824/claude-plugins/commit/6581db9d8b7b903abf832acc7feffbedd2270159))
+
 # [0.14.0](https://github.com/jwill824/claude-plugins/compare/dotfiles-v0.13.0...dotfiles-v0.14.0) (2026-11-05)
 
 
